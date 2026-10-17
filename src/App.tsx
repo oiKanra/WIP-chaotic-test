@@ -1,28 +1,51 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 /*
-  Система комнат с переходами
-  
-  Комната 1: Гостиная (Living Room)
-    - Стол с ноутбуком
-    - Шкафчики
-    - Окно
-    - Двери: на кухню (правая стена), в коридор (левая стена)
-  
-  Комната 2: Кухня (Kitchen)
-    - Плита с кастрюлей
-    - Кухонный стол с сыром
-    - Двери: в гостиную (левая стена), на балкон (правая стена)
+  Изометрическая комната на SVG — точная графика без артефактов.
+
+  Система координат пола (a, b) ∈ [0,1]×[0,1]:
+    W(0,0) → (150, 345)
+    N(1,0) → (400, 220)
+    E(1,1) → (650, 345)
+    S(0,1) → (400, 470)
+
+  Формула: screenX = 150 + 250*(a+b), screenY = 345 + 125*(b-a)
+  Высота: screenY -= height
 */
 
 type RoomId = 'living' | 'kitchen';
 
-interface Door {
-  id: string;
-  side: 'left' | 'right';
-  targetRoom: RoomId;
-  label: string;
+/* ── Изометрические хелперы ── */
+function iso(a: number, b: number, h = 0): [number, number] {
+  return [150 + 250 * (a + b), 345 + 125 * (b - a) - h];
 }
+
+function isoPoly(points: [number, number][]): string {
+  return points.map(([x, y]) => `${x},${y}`).join(' ');
+}
+
+/* Изометрический куб: позиция (a,b), размеры (w,d) в единицах пола, высота h */
+function isoBox(
+  a: number, b: number, w: number, d: number, h: number,
+  colors: { top: string; left: string; right: string }
+) {
+  const p = (da: number, db: number, dh: number) => iso(a + da, b + db, dh);
+
+  const topFace = isoPoly([p(0, 0, h), p(w, 0, h), p(w, d, h), p(0, d, h)]);
+  const leftFace = isoPoly([p(0, 0, h), p(0, d, h), p(0, d, 0), p(0, 0, 0)]);
+  const rightFace = isoPoly([p(0, 0, h), p(w, 0, h), p(w, 0, 0), p(0, 0, 0)]);
+
+  return (
+    <g>
+      <polygon points={leftFace} fill={colors.left} />
+      <polygon points={rightFace} fill={colors.right} />
+      <polygon points={topFace} fill={colors.top} />
+    </g>
+  );
+}
+
+/* ── Конфигурация комнат ── */
+interface Door { id: string; side: 'left' | 'right'; targetRoom: RoomId; label: string }
 
 const ROOMS: Record<RoomId, { name: string; doors: Door[] }> = {
   living: {
@@ -41,21 +64,24 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[] }> = {
   },
 };
 
-/* Точки интереса для каждой комнаты */
-const INTEREST_POINTS: Record<RoomId, Array<{ id: string; x: number; y: number; radius: number; rate: number; label: string }>> = {
+const INTEREST_POINTS: Record<RoomId, Array<{ id: string; a: number; b: number; radius: number; rate: number; label: string }>> = {
   living: [
-    { id: 'window', x: 262, y: 180, radius: 80, rate: 0.35, label: '🪟 Окно' },
-    { id: 'cabinets', x: 270, y: 310, radius: 70, rate: 0.25, label: '🗄️ Шкафчики' },
+    { id: 'window', a: 0.25, b: 0.1, radius: 90, rate: 0.35, label: '🪟 Окно' },
+    { id: 'cabinets', a: 0.15, b: 0.55, radius: 80, rate: 0.25, label: '🗄️ Шкафчики' },
   ],
   kitchen: [
-    { id: 'kitchen-table', x: 400, y: 380, radius: 80, rate: 0.55, label: '🧀 Кухня' },
-    { id: 'stove', x: 560, y: 280, radius: 60, rate: 0.3, label: '🔥 Плита' },
+    { id: 'kitchen-table', a: 0.55, b: 0.65, radius: 80, rate: 0.55, label: '🧀 Кухня' },
+    { id: 'stove', a: 0.75, b: 0.35, radius: 70, rate: 0.3, label: '🔥 Плита' },
   ],
 };
 
+/* ── Экранная позиция из iso-координат ── */
+function isoToScreen(a: number, b: number): [number, number] {
+  return iso(a, b, 0);
+}
+
 function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const roomRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [currentRoom, setCurrentRoom] = useState<RoomId>('living');
   const [mouse, setMouse] = useState({ x: 400, y: 400 });
   const [moving, setMoving] = useState(false);
@@ -64,83 +90,83 @@ function App() {
   const [cheeseLeft, setCheeseLeft] = useState(5);
   const [activeZone, setActiveZone] = useState<string | null>(null);
   const [transitioning, setTransitioning] = useState(false);
-  
+  const [hoveredDoor, setHoveredDoor] = useState<string | null>(null);
+
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
   const moodRef = useRef(50);
   const eatingRef = useRef(false);
 
+  /* Конвертация экранных координат в iso (a,b) */
+  const screenToIso = useCallback((sx: number, sy: number): [number, number] => {
+    // Обратное преобразование:
+    // sx = 150 + 250*(a+b)  →  a+b = (sx-150)/250
+    // sy = 345 + 125*(b-a)  →  b-a = (sy-345)/125
+    const sum = (sx - 150) / 250;
+    const diff = (sy - 345) / 125;
+    return [(sum - diff) / 2, (sum + diff) / 2];
+  }, []);
+
   /* Логика настроения */
   useEffect(() => {
     const interval = setInterval(() => {
-      const mx = mouse.x;
-      const my = mouse.y;
+      const [ma, mb] = screenToIso(mouse.x, mouse.y);
       const points = INTEREST_POINTS[currentRoom];
-
       let zone: string | null = null;
       let totalRate = 0;
 
       for (const pt of points) {
-        const dx = mx - pt.x;
-        const dy = my - pt.y;
+        const [px, py] = isoToScreen(pt.a, pt.b);
+        const dx = mouse.x - px;
+        const dy = mouse.y - py;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < pt.radius) {
-          const proximity = 1 - dist / pt.radius;
-          totalRate += pt.rate * proximity;
+          totalRate += pt.rate * (1 - dist / pt.radius);
           zone = pt.id;
         }
       }
 
       const isEating = zone === 'kitchen-table' && cheeseLeft > 0;
-
-      if (isEating && !eatingRef.current) {
-        eatingRef.current = true;
-        setEating(true);
-      } else if (!isEating && eatingRef.current) {
-        eatingRef.current = false;
-        setEating(false);
-      }
+      if (isEating && !eatingRef.current) { eatingRef.current = true; setEating(true); }
+      else if (!isEating && eatingRef.current) { eatingRef.current = false; setEating(false); }
 
       const effectiveRate = isEating ? totalRate * 1.8 : totalRate;
-
       let newMood = moodRef.current;
-      if (effectiveRate > 0) {
-        newMood = Math.min(100, newMood + effectiveRate);
-      } else {
-        newMood = Math.max(0, newMood - 0.08);
-      }
+      newMood = effectiveRate > 0
+        ? Math.min(100, newMood + effectiveRate)
+        : Math.max(0, newMood - 0.08);
 
       moodRef.current = newMood;
       setMood(newMood);
       setActiveZone(zone);
     }, 100);
-
     return () => clearInterval(interval);
-  }, [mouse.x, mouse.y, cheeseLeft, currentRoom]);
+  }, [mouse.x, mouse.y, cheeseLeft, currentRoom, screenToIso]);
 
-  /* Клик — съесть сыр или перейти через дверь */
   const handleClick = useCallback(() => {
     if (eatingRef.current && cheeseLeft > 0) {
-      setCheeseLeft(prev => prev - 1);
+      setCheeseLeft(p => p - 1);
       moodRef.current = Math.min(100, moodRef.current + 8);
       setMood(moodRef.current);
     }
   }, [cheeseLeft]);
 
-  /* Переход в другую комнату */
   const handleDoorClick = useCallback((targetRoom: RoomId) => {
     if (transitioning) return;
     setTransitioning(true);
     setTimeout(() => {
       setCurrentRoom(targetRoom);
-      setMouse({ x: 400, y: 400 }); // Центрируем мышь
+      setMouse({ x: 400, y: 400 });
       setTimeout(() => setTransitioning(false), 300);
     }, 300);
   }, [transitioning]);
 
   const onMove = useCallback((e: React.MouseEvent) => {
-    if (!roomRef.current || transitioning) return;
-    const r = roomRef.current.getBoundingClientRect();
-    setMouse({ x: e.clientX - r.left, y: e.clientY - r.top });
+    if (!svgRef.current || transitioning) return;
+    const r = svgRef.current.getBoundingClientRect();
+    // Масштабируем координаты — SVG viewBox 800x600, но реальный размер может отличаться
+    const scaleX = 800 / r.width;
+    const scaleY = 600 / r.height;
+    setMouse({ x: (e.clientX - r.left) * scaleX, y: (e.clientY - r.top) * scaleY });
     setMoving(true);
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setMoving(false), 120);
@@ -150,472 +176,428 @@ function App() {
 
   const moodEmoji = mood > 80 ? '😍' : mood > 60 ? '😊' : mood > 40 ? '🐁' : mood > 20 ? '😐' : '😢';
   const moodLabel = mood > 80 ? 'Счастлива!' : mood > 60 ? 'Довольна' : mood > 40 ? 'Нормально' : mood > 20 ? 'Скучно...' : 'Грустно...';
-  const moodColor = mood > 60 ? 'bg-green-400' : mood > 30 ? 'bg-yellow-400' : 'bg-red-400';
-  const mouseEmoji = eating ? '🐁✨' : moodEmoji === '😍' ? '🐁💕' : '🐁';
-
+  const mouseEmoji = eating ? '🐁✨' : mood > 80 ? '🐁💕' : '🐁';
   const roomConfig = ROOMS[currentRoom];
 
-  return (
-    <div
-      ref={containerRef}
-      className="w-full h-screen bg-white overflow-hidden relative flex items-center justify-center"
-      style={{ cursor: transitioning ? 'wait' : 'none' }}
-    >
-      <div
-        ref={roomRef}
-        className={`relative transition-opacity duration-300 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
-        style={{ width: 800, height: 600 }}
-        onMouseMove={onMove}
-        onClick={handleClick}
+  /* ── Двери в изометрии ── */
+  const renderDoor = (side: 'left' | 'right', door: Door) => {
+    // Левая стена: от W(0,0) к N(1,0), дверь на b=0
+    // Правая стена: от N(1,0) к E(1,1), дверь на a=1
+    const doorW = 0.12; // ширина двери в iso-единицах
+    const doorH = 70;   // высота двери в пикселях
+
+    let points: [number, number][];
+    let handlePos: [number, number];
+
+    if (side === 'left') {
+      // Дверь на левой стене, позиция a от 0.55 до 0.67
+      const a1 = 0.55, a2 = 0.67;
+      points = [
+        iso(a1, 0, 0), iso(a2, 0, 0),
+        iso(a2, 0, doorH), iso(a1, 0, doorH),
+      ];
+      handlePos = iso(a2 - 0.03, 0, doorH * 0.45);
+    } else {
+      // Дверь на правой стене, позиция b от 0.33 до 0.45
+      const b1 = 0.33, b2 = 0.45;
+      points = [
+        iso(1, b1, 0), iso(1, b2, 0),
+        iso(1, b2, doorH), iso(1, b1, doorH),
+      ];
+      handlePos = iso(1, b1 + 0.03, doorH * 0.45);
+    }
+
+    const isHovered = hoveredDoor === door.id;
+
+    return (
+      <g
+        key={door.id}
+        style={{ cursor: 'pointer' }}
+        onClick={(e) => { e.stopPropagation(); handleDoorClick(door.targetRoom); }}
+        onMouseEnter={() => setHoveredDoor(door.id)}
+        onMouseLeave={() => setHoveredDoor(null)}
       >
+        {/* Рама */}
+        <polygon
+          points={isoPoly(points)}
+          fill={isHovered ? '#7B5236' : '#5A3520'}
+          stroke="#3A1A08"
+          strokeWidth="1.5"
+        />
+        {/* Панели */}
+        {side === 'left' ? (
+          <>
+            <rect x={0} y={0} width={0} height={0} /> {/* placeholder */}
+            <polygon
+              points={isoPoly([iso(0.57, 0, 15), iso(0.65, 0, 15), iso(0.65, 0, 40), iso(0.57, 0, 40)])}
+              fill="none" stroke="#4A2A18" strokeWidth="0.8" opacity="0.5"
+            />
+            <polygon
+              points={isoPoly([iso(0.57, 0, 45), iso(0.65, 0, 45), iso(0.65, 0, 65), iso(0.57, 0, 65)])}
+              fill="none" stroke="#4A2A18" strokeWidth="0.8" opacity="0.5"
+            />
+          </>
+        ) : (
+          <>
+            <polygon
+              points={isoPoly([iso(1, 0.35, 15), iso(1, 0.43, 15), iso(1, 0.43, 40), iso(1, 0.35, 40)])}
+              fill="none" stroke="#4A2A18" strokeWidth="0.8" opacity="0.5"
+            />
+            <polygon
+              points={isoPoly([iso(1, 0.35, 45), iso(1, 0.43, 45), iso(1, 0.43, 65), iso(1, 0.35, 65)])}
+              fill="none" stroke="#4A2A18" strokeWidth="0.8" opacity="0.5"
+            />
+          </>
+        )}
+        {/* Ручка */}
+        <circle cx={handlePos[0]} cy={handlePos[1]} r="2.5" fill="#FFD700" />
+        {/* Подсказка */}
+        {isHovered && (
+          <text
+            x={(side === 'left' ? iso(0.61, 0, doorH + 12) : iso(1, 0.39, doorH + 12))[0]}
+            y={(side === 'left' ? iso(0.61, 0, doorH + 12) : iso(1, 0.39, doorH + 12))[1]}
+            textAnchor="middle"
+            fontSize="10"
+            fontFamily="monospace"
+            fill="#22c55e"
+          >
+            {door.label}
+          </text>
+        )}
+      </g>
+    );
+  };
 
-        {/* ═══════ ПОЛ ═══════ */}
-        <div className="absolute" style={{
-          left: 150, top: 220, width: 500, height: 250,
-          clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
-          background: currentRoom === 'living'
-            ? 'linear-gradient(135deg, #f0ebe3 0%, #e8e2d8 50%, #ddd6ca 100%)'
-            : 'linear-gradient(135deg, #e8e0d0 0%, #ddd5c5 50%, #d2cab8 100%)',
-        }}>
-          <svg width="500" height="250" className="absolute inset-0 opacity-15">
-            {Array.from({ length: 11 }).map((_, i) => (
-              <line key={`a${i}`} x1={i * 50} y1={0} x2={i * 50} y2={250} stroke="#b0a090" strokeWidth="0.5" />
-            ))}
-            {Array.from({ length: 6 }).map((_, i) => (
-              <line key={`b${i}`} x1={0} y1={i * 50} x2={500} y2={i * 50} stroke="#b0a090" strokeWidth="0.5" />
-            ))}
-          </svg>
+  /* ── Окно (на левой стене) ── */
+  const renderWindow = () => {
+    const a1 = 0.2, a2 = 0.45, h1 = 30, h2 = 85;
+    const pts = [iso(a1, 0, h1), iso(a2, 0, h1), iso(a2, 0, h2), iso(a1, 0, h2)];
+    return (
+      <g>
+        {/* Рама */}
+        <polygon points={isoPoly(pts)} fill="#87CEEB" stroke="#8B7355" strokeWidth="2.5" />
+        {/* Перекладины */}
+        <line {...lineProps(iso((a1 + a2) / 2, 0, h1), iso((a1 + a2) / 2, 0, h2))} stroke="#8B7355" strokeWidth="1.5" />
+        <line {...lineProps(iso(a1, 0, (h1 + h2) / 2), iso(a2, 0, (h1 + h2) / 2))} stroke="#8B7355" strokeWidth="1.5" />
+        {/* Облака */}
+        <ellipse cx={iso(0.27, 0, 72)[0]} cy={iso(0.27, 0, 72)[1]} rx="8" ry="4" fill="white" opacity="0.7" />
+        <ellipse cx={iso(0.32, 0, 75)[0]} cy={iso(0.32, 0, 75)[1]} rx="6" ry="3" fill="white" opacity="0.6" />
+        {/* Подоконник */}
+        <polygon
+          points={isoPoly([iso(a1 - 0.02, 0, h1 - 2), iso(a2 + 0.02, 0, h1 - 2), iso(a2 + 0.02, 0.03, h1 - 2), iso(a1 - 0.02, 0.03, h1 - 2)])}
+          fill="#7a6345"
+        />
+        {/* Цветок */}
+        <circle cx={iso(0.33, 0.015, h1 + 3)[0]} cy={iso(0.33, 0.015, h1 + 3)[1]} r="3" fill="#e06060" />
+        <line x1={iso(0.33, 0.015, h1 + 3)[0]} y1={iso(0.33, 0.015, h1 + 3)[1]} x2={iso(0.33, 0.015, h1 - 1)[0]} y2={iso(0.33, 0.015, h1 - 1)[1]} stroke="#4a884a" strokeWidth="1" />
+      </g>
+    );
+  };
+
+  return (
+    <div className="w-full h-screen bg-white overflow-hidden flex items-center justify-center">
+      {/* HUD */}
+      <div className="absolute top-4 left-4 z-50 flex flex-col gap-2 pointer-events-none">
+        <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-gray-200">
+          <span className="text-sm font-semibold text-gray-700">🏠 {roomConfig.name}</span>
         </div>
-
-        {/* ═══════ ЛЕВАЯ СТЕНА ═══════ */}
-        <div className="absolute" style={{
-          left: 150, top: 70, width: 250, height: 275,
-          clipPath: 'polygon(0% 100%, 100% 54.5%, 100% 0%, 0% 45.5%)',
-          background: currentRoom === 'living'
-            ? 'linear-gradient(to right, #eae6e0 0%, #e0dbd4 100%)'
-            : 'linear-gradient(to right, #f5f0e8 0%, #ebe5d8 100%)',
-        }} />
-
-        {/* ═══════ ПРАВАЯ СТЕНА ═══════ */}
-        <div className="absolute" style={{
-          left: 400, top: 70, width: 250, height: 275,
-          clipPath: 'polygon(0% 54.5%, 100% 100%, 100% 45.5%, 0% 0%)',
-          background: currentRoom === 'living'
-            ? 'linear-gradient(to left, #ddd8d0 0%, #d4cfc6 100%)'
-            : 'linear-gradient(to left, #ebe5d8 0%, #e0d9cc 100%)',
-        }} />
-
-        {/* ═══════ УГЛОВАЯ ЛИНИЯ ═══════ */}
-        <div className="absolute" style={{
-          left: 399, top: 70, width: 2, height: 150,
-          background: 'linear-gradient(to bottom, #c8c2b8, transparent)',
-        }} />
-
-        {/* ═══════ ДВЕРИ ═══════ */}
-        {roomConfig.doors.map(door => (
-          <IsoDoor
-            key={door.id}
-            side={door.side}
-            onClick={() => handleDoorClick(door.targetRoom)}
-            label={door.label}
-          />
-        ))}
-
-        {/* ═══════ СОДЕРЖИМОЕ КОМНАТЫ ═══════ */}
-        {currentRoom === 'living' && <LivingRoomContent />}
-        {currentRoom === 'kitchen' && <KitchenContent cheeseLeft={cheeseLeft} />}
-
-        {/* ═══════ HUD ═══════ */}
-        <div className="absolute top-4 left-4 z-50 flex flex-col gap-2 pointer-events-none">
-          {/* Название комнаты */}
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-gray-200">
-            <span className="text-sm font-semibold text-gray-700">🏠 {roomConfig.name}</span>
+        <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg border border-gray-200">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-lg">{moodEmoji}</span>
+            <span className="text-xs font-medium text-gray-600">{moodLabel}</span>
           </div>
-
-          {/* Настроение */}
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg border border-gray-200">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-lg">{moodEmoji}</span>
-              <span className="text-xs font-medium text-gray-600">{moodLabel}</span>
-            </div>
-            <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div className={`h-full ${moodColor} rounded-full transition-all duration-300`} style={{ width: `${mood}%` }} />
-            </div>
-            <div className="text-[10px] text-gray-400 mt-1 text-right">{Math.round(mood)}%</div>
+          <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${mood > 60 ? 'bg-green-400' : mood > 30 ? 'bg-yellow-400' : 'bg-red-400'}`}
+              style={{ width: `${mood}%` }}
+            />
           </div>
-
-          {/* Активная зона */}
-          {activeZone && (
-            <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow border border-gray-200 animate-fade-in">
-              <span className="text-xs text-gray-500">
-                {INTEREST_POINTS[currentRoom].find(p => p.id === activeZone)?.label}
-              </span>
-            </div>
-          )}
-
-          {/* Сыр (только на кухне) */}
-          {currentRoom === 'kitchen' && (
-            <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow border border-gray-200">
-              <span className="text-xs text-gray-500">
-                🧀 Сыр: {cheeseLeft > 0 ? '🧀'.repeat(cheeseLeft) : 'пусто 😢'}
-              </span>
-            </div>
-          )}
+          <div className="text-[10px] text-gray-400 mt-1 text-right">{Math.round(mood)}%</div>
         </div>
-
-        {/* Подсказка при еде */}
-        {eating && (
-          <div className="absolute top-4 right-4 z-50 bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-2 shadow animate-pulse pointer-events-none">
-            <span className="text-sm text-yellow-800">🐁 Ням-ням! Кликни чтобы съесть! 🧀</span>
+        {activeZone && (
+          <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow border border-gray-200">
+            <span className="text-xs text-gray-500">
+              {INTEREST_POINTS[currentRoom].find(p => p.id === activeZone)?.label}
+            </span>
           </div>
         )}
+        {currentRoom === 'kitchen' && (
+          <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow border border-gray-200">
+            <span className="text-xs text-gray-500">
+              🧀 Сыр: {cheeseLeft > 0 ? '🧀'.repeat(cheeseLeft) : 'пусто 😢'}
+            </span>
+          </div>
+        )}
+      </div>
 
-        {/* ═══════ ТЕНЬ ОТ МЫШКИ ═══════ */}
-        <div
-          className="absolute pointer-events-none z-40"
-          style={{
-            left: mouse.x + 3, top: mouse.y + 5,
-            width: 20, height: 10,
-            borderRadius: '50%',
-            background: 'rgba(0,0,0,0.08)',
-            transform: 'translate(-50%, -50%)',
-          }}
+      {eating && (
+        <div className="absolute top-4 right-4 z-50 bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-2 shadow animate-pulse pointer-events-none">
+          <span className="text-sm text-yellow-800">🐁 Ням-ням! Кликни чтобы съесть! 🧀</span>
+        </div>
+      )}
+
+      {/* SVG сцена */}
+      <svg
+        ref={svgRef}
+        viewBox="0 0 800 600"
+        className={`w-full h-full max-w-4xl max-h-[700px] transition-opacity duration-300 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
+        onMouseMove={onMove}
+        onClick={handleClick}
+        style={{ cursor: transitioning ? 'wait' : 'none' }}
+      >
+        {/* ═══ ПОЛ ═══ */}
+        <polygon
+          points={isoPoly([iso(0, 0, 0), iso(1, 0, 0), iso(1, 1, 0), iso(0, 1, 0)])}
+          fill={currentRoom === 'living' ? '#e8e2d8' : '#ddd5c5'}
+          stroke="#c8c0b0"
+          strokeWidth="0.5"
+        />
+        {/* Паркет */}
+        {Array.from({ length: 10 }).map((_, i) => {
+          const t = i / 10;
+          return (
+            <g key={`grid-${i}`} opacity="0.12">
+              <line {...lineProps(iso(t, 0, 0), iso(t, 1, 0))} stroke="#a09080" strokeWidth="0.5" />
+              <line {...lineProps(iso(0, t, 0), iso(1, t, 0))} stroke="#a09080" strokeWidth="0.5" />
+            </g>
+          );
+        })}
+
+        {/* ═══ ЛЕВАЯ СТЕНА ═══ */}
+        <polygon
+          points={isoPoly([iso(0, 0, 0), iso(1, 0, 0), iso(1, 0, 150), iso(0, 0, 150)])}
+          fill={currentRoom === 'living' ? '#e0dbd4' : '#ebe5d8'}
         />
 
-        {/* ═══════ МЫШКА-ЭМОДЗИ ═══════ */}
-        <div
-          className="absolute pointer-events-none z-50"
+        {/* ═══ ПРАВАЯ СТЕНА ═══ */}
+        <polygon
+          points={isoPoly([iso(1, 0, 0), iso(1, 1, 0), iso(1, 1, 150), iso(1, 0, 150)])}
+          fill={currentRoom === 'living' ? '#d4cfc6' : '#e0d9cc'}
+        />
+
+        {/* Угловая линия */}
+        <line {...lineProps(iso(1, 0, 0), iso(1, 0, 150))} stroke="#b8b0a5" strokeWidth="1" />
+
+        {/* ═══ ДВЕРИ ═══ */}
+        {roomConfig.doors.map(door => renderDoor(door.side, door))}
+
+        {/* ═══ СОДЕРЖИМОЕ КОМНАТЫ ═══ */}
+        {currentRoom === 'living' && <LivingRoomSVG />}
+        {currentRoom === 'kitchen' && <KitchenSVG cheeseLeft={cheeseLeft} />}
+
+        {/* ═══ КОВЁР (гостиная) ═══ */}
+        {currentRoom === 'living' && (
+          <polygon
+            points={isoPoly([iso(0.35, 0.45, 0.3), iso(0.65, 0.45, 0.3), iso(0.65, 0.7, 0.3), iso(0.35, 0.7, 0.3)])}
+            fill="#c44a4e"
+            opacity="0.35"
+          />
+        )}
+
+        {/* ═══ ТЕНЬ МЫШКИ ═══ */}
+        <ellipse cx={mouse.x + 2} cy={mouse.y + 4} rx="8" ry="4" fill="rgba(0,0,0,0.07)" />
+
+        {/* ═══ МЫШКА-ЭМОДЗИ ═══ */}
+        <text
+          x={mouse.x}
+          y={mouse.y}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize="28"
           style={{
-            left: mouse.x, top: mouse.y,
-            transform: `translate(-50%, -50%) ${moving ? 'rotate(-8deg) scale(1.15)' : 'rotate(0deg) scale(1)'}`,
+            transform: moving ? 'rotate(-8deg)' : 'rotate(0deg)',
+            transformOrigin: `${mouse.x}px ${mouse.y}px`,
             transition: 'transform 0.12s ease-out',
-            fontSize: 32,
             filter: eating
-              ? 'drop-shadow(0 0 8px rgba(255,200,0,0.5))'
+              ? 'drop-shadow(0 0 6px rgba(255,200,0,0.5))'
               : mood > 70
-                ? 'drop-shadow(0 0 6px rgba(255,100,150,0.4))'
-                : 'drop-shadow(1px 2px 3px rgba(0,0,0,0.12))',
-            lineHeight: 1,
+                ? 'drop-shadow(0 0 4px rgba(255,100,150,0.4))'
+                : 'drop-shadow(1px 2px 2px rgba(0,0,0,0.1))',
           }}
         >
           {mouseEmoji}
-        </div>
+        </text>
 
         {/* Частицы при еде */}
         {eating && (
-          <div className="absolute pointer-events-none z-40" style={{ left: mouse.x, top: mouse.y - 20 }}>
-            <span className="absolute text-xs animate-float-up" style={{ left: -8, animationDelay: '0s' }}>✨</span>
-            <span className="absolute text-xs animate-float-up" style={{ left: 4, animationDelay: '0.3s' }}>⭐</span>
-            <span className="absolute text-xs animate-float-up" style={{ left: -2, animationDelay: '0.6s' }}>💛</span>
-          </div>
+          <g>
+            <text x={mouse.x - 10} y={mouse.y - 18} fontSize="10" className="animate-float-up">✨</text>
+            <text x={mouse.x + 6} y={mouse.y - 22} fontSize="10" className="animate-float-up" style={{ animationDelay: '0.3s' }}>⭐</text>
+            <text x={mouse.x - 2} y={mouse.y - 14} fontSize="10" className="animate-float-up" style={{ animationDelay: '0.6s' }}>💛</text>
+          </g>
         )}
+      </svg>
 
-        {/* Подсказка */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
-          {currentRoom === 'living' ? 'подойди к окну 🪟 или шкафчикам 🗄️ • кликни на дверь для перехода' : 'подойди к сыру 🧀 и кликай • кликни на дверь для перехода'}
-        </div>
-
+      {/* Подсказка */}
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
+        {currentRoom === 'living' ? 'подойди к окну 🪟 или шкафчикам 🗄️ • кликни на дверь' : 'подойди к сыру 🧀 и кликай • кликни на дверь'}
       </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════
-   КОМПОНЕНТЫ КОМНАТ
+   SVG КОМПОНЕНТЫ КОМНАТ
    ═══════════════════════════════════════ */
 
-function LivingRoomContent() {
+function LivingRoomSVG() {
   return (
-    <>
+    <g>
       {/* Окно */}
-      <div className="absolute" style={{ left: 220, top: 105 }}>
-        <div style={{
-          width: 85, height: 72,
-          background: 'linear-gradient(180deg, #a8d8f0 0%, #87CEEB 60%, #6bb8d9 100%)',
-          border: '3px solid #8B7355',
-          transform: 'skewY(-26.5deg)',
-          boxShadow: 'inset 0 0 20px rgba(135,206,235,0.4)',
-        }}>
-          <div className="absolute top-0 bottom-0 left-1/2 w-[2px] bg-amber-800/70 -translate-x-1/2" />
-          <div className="absolute left-0 right-0 top-1/2 h-[2px] bg-amber-800/70 -translate-y-1/2" />
-          <div className="absolute top-2 left-1 w-7 h-2.5 bg-white/80 rounded-full" />
-          <div className="absolute top-1.5 left-3 w-5 h-2.5 bg-white/80 rounded-full" />
-          <div className="absolute top-4 right-2 w-5 h-2 bg-white/60 rounded-full" />
-        </div>
-        <div className="absolute" style={{
-          left: -4, bottom: -6, width: 93, height: 5,
-          background: '#7a6345',
-          transform: 'skewY(-26.5deg)',
-          borderRadius: 1,
-        }} />
-        <div className="absolute" style={{ left: 30, bottom: -2 }}>
-          <div style={{ width: 8, height: 8, background: '#e06060', borderRadius: '50%', transform: 'skewY(-26.5deg)' }} />
-          <div style={{ width: 2, height: 6, background: '#4a8', position: 'absolute', bottom: -5, left: 3 }} />
-          <div style={{ width: 7, height: 4, background: '#8B6345', borderRadius: '0 0 2px 2px', position: 'absolute', bottom: -9, left: 0, transform: 'skewY(-26.5deg)' }} />
-        </div>
-      </div>
+      {renderWindowStatic()}
 
       {/* Шкафчики */}
-      <IsoCabinet x={210} y={290} topColor="#8899AA" leftColor="#667788" rightColor="#778899" />
-      <IsoCabinet x={250} y={270} topColor="#8090A0" leftColor="#607080" rightColor="#708090" />
-      <IsoCabinet x={290} y={250} topColor="#8899AA" leftColor="#667788" rightColor="#778899" />
+      {isoBox(0.05, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' })}
+      {isoBox(0.17, 0.45, 0.12, 0.12, 55, { top: '#8090A0', left: '#607080', right: '#708090' })}
+      {isoBox(0.29, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' })}
+      {/* Ручки шкафчиков */}
+      {[0.11, 0.23, 0.35].map((a, i) => (
+        <circle key={i} cx={iso(a, 0.51, 25)[0]} cy={iso(a, 0.51, 25)[1]} r="1.5" fill="#555" />
+      ))}
 
       {/* Стол */}
-      <IsoTable x={350} y={310} />
+      {isoBox(0.38, 0.42, 0.25, 0.18, 38, { top: '#b8884c', left: '#7a5828', right: '#8a6830' })}
 
-      {/* Ноутбук */}
-      <IsoLaptop x={380} y={290} />
+      {/* Ноутбук на столе */}
+      {isoBox(0.44, 0.46, 0.08, 0.06, 42, { top: '#555', left: '#444', right: '#4a4a4a' })}
+      {/* Экран ноутбука */}
+      <polygon
+        points={isoPoly([iso(0.44, 0.46, 42), iso(0.52, 0.46, 42), iso(0.52, 0.46, 55), iso(0.44, 0.46, 55)])}
+        fill="#333" stroke="#444" strokeWidth="0.5"
+      />
+      <polygon
+        points={isoPoly([iso(0.445, 0.46, 43), iso(0.515, 0.46, 43), iso(0.515, 0.46, 54), iso(0.445, 0.46, 54)])}
+        fill="#1a2a3a"
+      />
+      <circle cx={iso(0.48, 0.46, 48)[0]} cy={iso(0.48, 0.46, 48)[1]} r="1.5" fill="#22c55e" opacity="0.8">
+        <animate attributeName="opacity" values="0.8;0.3;0.8" dur="2s" repeatCount="indefinite" />
+      </circle>
 
-      {/* Лампа */}
-      <div className="absolute" style={{ left: 430, top: 285 }}>
-        <div className="absolute" style={{ width: 12, height: 6, borderRadius: '50%', background: '#555', bottom: 0, left: 0 }} />
-        <div className="absolute" style={{ width: 2, height: 18, background: '#666', bottom: 5, left: 5 }} />
-        <div className="absolute" style={{
-          width: 16, height: 10, bottom: 22, left: -2,
-          background: '#e8d888', borderRadius: '50% 50% 0 0',
-          boxShadow: '0 4px 8px rgba(232,216,136,0.3)',
-        }} />
-      </div>
+      {/* Лампа на столе */}
+      <ellipse cx={iso(0.57, 0.52, 38)[0]} cy={iso(0.57, 0.52, 38)[1]} rx="4" ry="2" fill="#555" />
+      <line {...lineProps(iso(0.57, 0.52, 38), iso(0.57, 0.52, 52))} stroke="#666" strokeWidth="1.5" />
+      <ellipse cx={iso(0.57, 0.52, 54)[0]} cy={iso(0.57, 0.52, 54)[1]} rx="6" ry="3" fill="#e8d888" />
 
-      {/* Ковёр */}
-      <div className="absolute" style={{
-        left: 330, top: 345, width: 140, height: 70,
-        clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
-        background: '#c44a4e', opacity: 0.45,
-      }} />
-      <div className="absolute" style={{
-        left: 340, top: 350, width: 120, height: 60,
-        clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
-        background: '#d45a5e', opacity: 0.35,
-      }} />
+      {/* Рамка на правой стене */}
+      <polygon
+        points={isoPoly([iso(1, 0.55, 50), iso(1, 0.7, 50), iso(1, 0.7, 80), iso(1, 0.55, 80)])}
+        fill="#f5f0e0" stroke="#8B7355" strokeWidth="1.5"
+      />
+      <polygon
+        points={isoPoly([iso(1, 0.57, 53), iso(1, 0.68, 53), iso(1, 0.68, 77), iso(1, 0.57, 77)])}
+        fill="#c8e0c8" opacity="0.4"
+      />
 
-      {/* Рамка */}
-      <div className="absolute" style={{ left: 520, top: 115 }}>
-        <div style={{
-          width: 40, height: 32,
-          border: '2px solid #8B7355',
-          background: '#f5f0e0',
-          transform: 'skewY(26.5deg)',
-        }}>
-          <div className="absolute inset-1 bg-gradient-to-br from-green-200 to-blue-200 opacity-50" />
-        </div>
-      </div>
-
-      {/* Часы */}
-      <div className="absolute" style={{ left: 565, top: 95 }}>
-        <div style={{
-          width: 22, height: 22, borderRadius: '50%',
-          border: '2px solid #8B7355', background: '#fff',
-          transform: 'skewY(26.5deg)',
-        }}>
-          <div className="absolute top-1/2 left-1/2 w-[1px] h-2 bg-black origin-bottom -translate-x-1/2 -translate-y-full rotate-[30deg]" />
-          <div className="absolute top-1/2 left-1/2 w-[1px] h-1.5 bg-black origin-bottom -translate-x-1/2 -translate-y-full rotate-[150deg]" />
-        </div>
-      </div>
-    </>
+      {/* Часы на правой стене */}
+      <circle cx={iso(1, 0.78, 95)[0]} cy={iso(1, 0.78, 95)[1]} r="8" fill="#fff" stroke="#8B7355" strokeWidth="1.5" />
+      <line
+        x1={iso(1, 0.78, 95)[0]} y1={iso(1, 0.78, 95)[1]}
+        x2={iso(1, 0.78, 95)[0] + 3} y2={iso(1, 0.78, 95)[1] - 5}
+        stroke="#333" strokeWidth="1"
+      />
+      <line
+        x1={iso(1, 0.78, 95)[0]} y1={iso(1, 0.78, 95)[1]}
+        x2={iso(1, 0.78, 95)[0] - 4} y2={iso(1, 0.78, 95)[1] - 2}
+        stroke="#333" strokeWidth="0.8"
+      />
+    </g>
   );
 }
 
-function KitchenContent({ cheeseLeft }: { cheeseLeft: number }) {
+function KitchenSVG({ cheeseLeft }: { cheeseLeft: number }) {
   return (
-    <>
+    <g>
       {/* Кухонный стол */}
-      <IsoKitchenTable x={360} y={350} />
+      {isoBox(0.45, 0.55, 0.2, 0.15, 35, { top: '#f0f0f0', left: '#c8c8c8', right: '#d0d0d0' })}
+      {/* Дверца */}
+      <polygon
+        points={isoPoly([iso(0.5, 0.7, 5), iso(0.5, 0.7, 28), iso(0.6, 0.7, 28), iso(0.6, 0.7, 5)])}
+        fill="#bbb" stroke="#aaa" strokeWidth="0.5"
+      />
+      <circle cx={iso(0.55, 0.7, 16)[0]} cy={iso(0.55, 0.7, 16)[1]} r="1.2" fill="#888" />
 
       {/* Тарелка с сыром */}
-      <IsoCheesePlate x={390} y={335} pieces={cheeseLeft} />
+      <ellipse cx={iso(0.55, 0.62, 36)[0]} cy={iso(0.55, 0.62, 36)[1]} rx="10" ry="5" fill="#fff" stroke="#ddd" strokeWidth="0.5" />
+      {cheeseLeft > 0 && Array.from({ length: Math.min(cheeseLeft, 5) }).map((_, i) => {
+        const cx = iso(0.53 + (i % 3) * 0.02, 0.61 + Math.floor(i / 3) * 0.02, 37)[0];
+        const cy = iso(0.53 + (i % 3) * 0.02, 0.61 + Math.floor(i / 3) * 0.02, 37)[1];
+        return (
+          <g key={i}>
+            <rect x={cx - 3} y={cy - 2.5} width="6" height="5" rx="0.5" fill="#FFD700" transform={`rotate(${i * 15 - 20} ${cx} ${cy})`} />
+            <circle cx={cx + 1} cy={cy} r="0.8" fill="#DAA520" opacity="0.4" />
+          </g>
+        );
+      })}
+      {cheeseLeft === 0 && (
+        <text x={iso(0.55, 0.62, 38)[0]} y={iso(0.55, 0.62, 38)[1]} textAnchor="middle" fontSize="8" opacity="0.4">🍽️</text>
+      )}
 
       {/* Плита */}
-      <IsoStove x={520} y={260} />
+      {isoBox(0.7, 0.25, 0.15, 0.18, 40, { top: '#444', left: '#333', right: '#3a3a3a' })}
+      {/* Конфорки */}
+      <ellipse cx={iso(0.74, 0.31, 41)[0]} cy={iso(0.74, 0.31, 41)[1]} rx="4" ry="2" fill="#222" stroke="#555" strokeWidth="0.5" />
+      <ellipse cx={iso(0.81, 0.37, 41)[0]} cy={iso(0.81, 0.37, 41)[1]} rx="4" ry="2" fill="#222" stroke="#555" strokeWidth="0.5" />
+      {/* Огонь */}
+      <ellipse cx={iso(0.74, 0.31, 41)[0]} cy={iso(0.74, 0.31, 41)[1]} rx="3" ry="1.5" fill="#ff6600" opacity="0.5">
+        <animate attributeName="opacity" values="0.5;0.8;0.5" dur="0.8s" repeatCount="indefinite" />
+      </ellipse>
+      {/* Духовка */}
+      <polygon
+        points={isoPoly([iso(0.72, 0.43, 8), iso(0.72, 0.43, 32), iso(0.83, 0.43, 32), iso(0.83, 0.43, 8)])}
+        fill="#1a1a1a" stroke="#444" strokeWidth="0.5"
+      />
+      <line {...lineProps(iso(0.75, 0.43, 28), iso(0.8, 0.43, 28))} stroke="#666" strokeWidth="1" />
 
       {/* Кастрюля */}
-      <div className="absolute" style={{ left: 533, top: 242 }}>
-        <div style={{
-          width: 14, height: 10, borderRadius: '0 0 4px 4px',
-          background: 'linear-gradient(180deg, #666 0%, #444 100%)',
-          border: '1px solid #555',
-        }}>
-          <div className="absolute -top-3 left-1 w-1 h-3 bg-gray-300/40 rounded-full animate-pulse" />
-          <div className="absolute -top-4 left-3 w-1 h-4 bg-gray-300/30 rounded-full animate-pulse" style={{ animationDelay: '0.3s' }} />
-          <div className="absolute -top-2 left-5 w-1 h-2 bg-gray-300/30 rounded-full animate-pulse" style={{ animationDelay: '0.6s' }} />
-        </div>
-      </div>
+      <ellipse cx={iso(0.74, 0.31, 43)[0]} cy={iso(0.74, 0.31, 43)[1]} rx="5" ry="2.5" fill="#666" stroke="#555" strokeWidth="0.5" />
+      <rect x={iso(0.74, 0.31, 43)[0] - 5} y={iso(0.74, 0.31, 43)[1]} width="10" height="5" rx="1" fill="#555" />
+      {/* Пар */}
+      <circle cx={iso(0.74, 0.31, 50)[0]} cy={iso(0.74, 0.31, 50)[1]} r="2" fill="#ddd" opacity="0.3">
+        <animate attributeName="cy" values={`${iso(0.74, 0.31, 48)[1]};${iso(0.74, 0.31, 55)[1]}`} dur="2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.3;0" dur="2s" repeatCount="indefinite" />
+      </circle>
+      <circle cx={iso(0.75, 0.31, 50)[0]} cy={iso(0.75, 0.31, 50)[1]} r="1.5" fill="#ddd" opacity="0.2">
+        <animate attributeName="cy" values={`${iso(0.75, 0.31, 48)[1]};${iso(0.75, 0.31, 56)[1]}`} dur="2.5s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.2;0" dur="2.5s" repeatCount="indefinite" />
+      </circle>
 
       {/* Холодильник */}
-      <IsoFridge x={200} y={280} />
+      {isoBox(0.05, 0.25, 0.13, 0.15, 80, { top: '#f5f5f5', left: '#ddd', right: '#e0e0e0' })}
+      <circle cx={iso(0.18, 0.32, 45)[0]} cy={iso(0.18, 0.32, 45)[1]} r="1.5" fill="#aaa" />
 
-      {/* Рамка с рецептом */}
-      <div className="absolute" style={{ left: 520, top: 115 }}>
-        <div style={{
-          width: 40, height: 32,
-          border: '2px solid #8B7355',
-          background: '#fffef0',
-          transform: 'skewY(26.5deg)',
-        }}>
-          <div className="absolute inset-1 text-[6px] text-gray-400 font-mono">📝</div>
-        </div>
-      </div>
-    </>
+      {/* Рамка с рецептом на правой стене */}
+      <polygon
+        points={isoPoly([iso(1, 0.55, 50), iso(1, 0.68, 50), iso(1, 0.68, 75), iso(1, 0.55, 75)])}
+        fill="#fffef0" stroke="#8B7355" strokeWidth="1.5"
+      />
+      <text x={iso(1, 0.615, 62)[0]} y={iso(1, 0.615, 62)[1]} textAnchor="middle" fontSize="8" fill="#999">📝</text>
+    </g>
   );
 }
 
-/* ═══════════════════════════════════════
-   КОМПОНЕНТЫ МЕБЕЛИ
-   ═══════════════════════════════════════ */
-
-function IsoDoor({ side, onClick, label }: { side: 'left' | 'right'; onClick: () => void; label: string }) {
-  const isLeft = side === 'left';
+/* ── Статическое окно (для LivingRoomSVG) ── */
+function renderWindowStatic() {
+  const a1 = 0.2, a2 = 0.45, h1 = 30, h2 = 85;
   return (
-    <div
-      className="absolute cursor-pointer group"
-      style={{ left: isLeft ? 310 : 445, top: 128 }}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-    >
-      <div style={{
-        width: 48, height: 105,
-        background: 'linear-gradient(180deg, #6B4226 0%, #5A3520 60%, #4A2A18 100%)',
-        border: '2px solid #3A1A08',
-        transform: `skewY(${isLeft ? -26.5 : 26.5}deg)`,
-        borderRadius: '2px 2px 0 0',
-        transition: 'all 0.2s',
-      }}
-        className="group-hover:brightness-110"
-      >
-        <div className="absolute top-[8%] left-[12%] right-[12%] h-[28%] border border-amber-900/30 rounded-sm bg-amber-950/10" />
-        <div className="absolute top-[44%] left-[12%] right-[12%] h-[35%] border border-amber-900/30 rounded-sm bg-amber-950/10" />
-        <div className={`absolute top-[52%] ${isLeft ? 'right-[14%]' : 'left-[14%]'} w-2.5 h-2.5 rounded-full bg-yellow-500 shadow-md shadow-yellow-600/40`} />
-      </div>
-      {/* Подсказка */}
-      <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 text-green-400 text-xs px-2 py-1 rounded whitespace-nowrap font-mono">
-        {label}
-      </div>
-    </div>
+    <g>
+      <polygon points={isoPoly([iso(a1, 0, h1), iso(a2, 0, h1), iso(a2, 0, h2), iso(a1, 0, h2)])} fill="#87CEEB" stroke="#8B7355" strokeWidth="2" />
+      <line {...lineProps(iso((a1 + a2) / 2, 0, h1), iso((a1 + a2) / 2, 0, h2))} stroke="#8B7355" strokeWidth="1.2" />
+      <line {...lineProps(iso(a1, 0, (h1 + h2) / 2), iso(a2, 0, (h1 + h2) / 2))} stroke="#8B7355" strokeWidth="1.2" />
+      <ellipse cx={iso(0.27, 0, 72)[0]} cy={iso(0.27, 0, 72)[1]} rx="7" ry="3.5" fill="white" opacity="0.7" />
+      <ellipse cx={iso(0.33, 0, 75)[0]} cy={iso(0.33, 0, 75)[1]} rx="5" ry="2.5" fill="white" opacity="0.6" />
+      <polygon
+        points={isoPoly([iso(a1 - 0.02, 0, h1 - 2), iso(a2 + 0.02, 0, h1 - 2), iso(a2 + 0.02, 0.03, h1 - 2), iso(a1 - 0.02, 0.03, h1 - 2)])}
+        fill="#7a6345"
+      />
+      <circle cx={iso(0.33, 0.015, h1 + 3)[0]} cy={iso(0.33, 0.015, h1 + 3)[1]} r="3" fill="#e06060" />
+      <line x1={iso(0.33, 0.015, h1 + 3)[0]} y1={iso(0.33, 0.015, h1 + 3)[1]} x2={iso(0.33, 0.015, h1 - 1)[0]} y2={iso(0.33, 0.015, h1 - 1)[1]} stroke="#4a884a" strokeWidth="1" />
+    </g>
   );
 }
 
-function IsoTable({ x, y }: { x: number; y: number }) {
-  const tw = 110, th = 55, td = 35;
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: tw, height: th, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)', background: 'linear-gradient(135deg, #b8884c 0%, #a07840 50%, #987038 100%)' }} />
-      <div style={{ position: 'absolute', top: th / 2, left: 0, width: tw / 2, height: td, clipPath: 'polygon(0% 0%, 100% 50%, 100% 100%, 0% 50%)', background: 'linear-gradient(180deg, #7a5828 0%, #6a4818 100%)' }} />
-      <div style={{ position: 'absolute', top: th / 2, left: tw / 2, width: tw / 2, height: td, clipPath: 'polygon(0% 50%, 100% 0%, 100% 50%, 0% 100%)', background: 'linear-gradient(180deg, #8a6830 0%, #7a5820 100%)' }} />
-      <div style={{ position: 'absolute', top: th / 2 + 5, left: tw / 2 + 8, width: tw / 2 - 16, height: 12, clipPath: 'polygon(0% 20%, 100% 0%, 100% 80%, 0% 100%)', background: '#6a4818', border: '1px solid #5a3808' }} />
-      <div className="absolute" style={{ top: th / 2 + 10, left: tw / 2 + 22, width: 10, height: 2, background: '#c0a060', borderRadius: 1 }} />
-    </div>
-  );
-}
-
-function IsoLaptop({ x, y }: { x: number; y: number }) {
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{ position: 'absolute', top: 8, left: 0, width: 36, height: 18, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)', background: '#555' }} />
-      <div style={{ position: 'absolute', top: -4, left: 4, width: 30, height: 20, background: '#333', borderRadius: 2, transform: 'perspective(100px) rotateX(10deg)', border: '1.5px solid #444' }}>
-        <div className="absolute inset-[2px] bg-[#1a2a3a] rounded-sm flex items-center justify-center">
-          <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function IsoCabinet({ x, y, topColor, leftColor, rightColor }: {
-  x: number; y: number; topColor: string; leftColor: string; rightColor: string;
-}) {
-  const w = 40, h = 20, d = 45;
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: w, height: h, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)', background: topColor }} />
-      <div style={{ position: 'absolute', top: h / 2, left: 0, width: w / 2, height: d, clipPath: 'polygon(0% 0%, 100% 50%, 100% 100%, 0% 50%)', background: leftColor }} />
-      <div style={{ position: 'absolute', top: h / 2, left: w / 2, width: w / 2, height: d, clipPath: 'polygon(0% 50%, 100% 0%, 100% 50%, 0% 100%)', background: rightColor }} />
-      <div className="absolute rounded-full bg-gray-600" style={{ top: h / 2 + d / 2 - 2, left: w / 4 - 1, width: 3, height: 3 }} />
-    </div>
-  );
-}
-
-function IsoKitchenTable({ x, y }: { x: number; y: number }) {
-  const tw = 80, th = 40, td = 30;
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: tw, height: th, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)', background: 'linear-gradient(135deg, #f0f0f0 0%, #e0e0e0 50%, #d5d5d5 100%)' }} />
-      <div style={{ position: 'absolute', top: th / 2, left: 0, width: tw / 2, height: td, clipPath: 'polygon(0% 0%, 100% 50%, 100% 100%, 0% 50%)', background: 'linear-gradient(180deg, #c8c8c8 0%, #b0b0b0 100%)' }} />
-      <div style={{ position: 'absolute', top: th / 2, left: tw / 2, width: tw / 2, height: td, clipPath: 'polygon(0% 50%, 100% 0%, 100% 50%, 0% 100%)', background: 'linear-gradient(180deg, #d0d0d0 0%, #b8b8b8 100%)' }} />
-      <div style={{ position: 'absolute', top: th / 2 + 3, left: tw / 2 + 6, width: tw / 2 - 12, height: td - 8, clipPath: 'polygon(0% 10%, 100% 0%, 100% 90%, 0% 100%)', background: '#bbb', border: '1px solid #aaa' }} />
-      <div className="absolute" style={{ top: th / 2 + td / 2, left: tw / 2 + 16, width: 8, height: 2, background: '#888', borderRadius: 1 }} />
-    </div>
-  );
-}
-
-function IsoCheesePlate({ x, y, pieces }: { x: number; y: number; pieces: number }) {
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{
-        position: 'absolute', top: 0, left: 0,
-        width: 30, height: 15,
-        clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
-        background: 'linear-gradient(135deg, #fff 0%, #f0f0f0 50%, #e8e8e8 100%)',
-        border: '1px solid #ddd',
-      }} />
-      {pieces > 0 && (
-        <div className="absolute" style={{ top: -2, left: 8 }}>
-          {Array.from({ length: Math.min(pieces, 5) }).map((_, i) => (
-            <div
-              key={i}
-              className="absolute"
-              style={{
-                width: 6, height: 5,
-                background: `linear-gradient(135deg, #FFD700 0%, #FFC107 50%, #FFB300 100%)`,
-                borderRadius: '1px',
-                left: (i % 3) * 5 - 2,
-                top: Math.floor(i / 3) * 3 - 1,
-                transform: `rotate(${i * 15 - 20}deg)`,
-                boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
-              }}
-            >
-              <div className="absolute w-1 h-1 rounded-full bg-amber-600/30" style={{ top: 1, left: 2 }} />
-            </div>
-          ))}
-        </div>
-      )}
-      {pieces === 0 && (
-        <div className="absolute text-[8px]" style={{ top: -4, left: 6, opacity: 0.4 }}>
-          🍽️
-        </div>
-      )}
-    </div>
-  );
-}
-
-function IsoStove({ x, y }: { x: number; y: number }) {
-  const w = 50, h = 25, d = 55;
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: w, height: h, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)', background: 'linear-gradient(135deg, #444 0%, #333 100%)' }}>
-        <div className="absolute" style={{ top: '30%', left: '25%', width: 8, height: 4, borderRadius: '50%', background: '#222', border: '1px solid #555' }} />
-        <div className="absolute" style={{ top: '30%', left: '55%', width: 8, height: 4, borderRadius: '50%', background: '#222', border: '1px solid #555' }} />
-        <div className="absolute animate-pulse" style={{ top: '25%', left: '26%', width: 6, height: 3, borderRadius: '50%', background: 'radial-gradient(#ff6600, #ff4400, transparent)', opacity: 0.7 }} />
-      </div>
-      <div style={{ position: 'absolute', top: h / 2, left: 0, width: w / 2, height: d, clipPath: 'polygon(0% 0%, 100% 50%, 100% 100%, 0% 50%)', background: 'linear-gradient(180deg, #333 0%, #222 100%)' }} />
-      <div style={{ position: 'absolute', top: h / 2, left: w / 2, width: w / 2, height: d, clipPath: 'polygon(0% 50%, 100% 0%, 100% 50%, 0% 100%)', background: 'linear-gradient(180deg, #3a3a3a 0%, #2a2a2a 100%)' }}>
-        <div style={{ position: 'absolute', top: '15%', left: '15%', right: '15%', bottom: '15%', background: '#1a1a1a', border: '1px solid #444', borderRadius: 2 }}>
-          <div className="absolute top-1 left-1/2 -translate-x-1/2 w-3 h-0.5 bg-gray-600 rounded" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function IsoFridge({ x, y }: { x: number; y: number }) {
-  const w = 45, h = 22, d = 70;
-  return (
-    <div className="absolute" style={{ left: x, top: y }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: w, height: h, clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)', background: 'linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%)' }} />
-      <div style={{ position: 'absolute', top: h / 2, left: 0, width: w / 2, height: d, clipPath: 'polygon(0% 0%, 100% 50%, 100% 100%, 0% 50%)', background: 'linear-gradient(180deg, #ddd 0%, #ccc 100%)' }} />
-      <div style={{ position: 'absolute', top: h / 2, left: w / 2, width: w / 2, height: d, clipPath: 'polygon(0% 50%, 100% 0%, 100% 50%, 0% 100%)', background: 'linear-gradient(180deg, #e0e0e0 0%, #d0d0d0 100%)' }}>
-        <div className="absolute rounded-full bg-gray-400" style={{ top: '40%', left: '20%', width: 3, height: 3 }} />
-      </div>
-    </div>
-  );
+/* ── Хелпер для SVG line ── */
+function lineProps([x1, y1]: [number, number], [x2, y2]: [number, number]) {
+  return { x1, y1, x2, y2 };
 }
 
 export default App;
