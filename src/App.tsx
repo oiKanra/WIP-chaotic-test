@@ -1,39 +1,22 @@
 import { useState } from 'react';
-import Game from './components/Game';
-import StartScreen from './components/StartScreen';
-import GameOverScreen from './components/GameOverScreen';
+import Room from './components/Room';
+import IntroScreen from './components/IntroScreen';
 
-type GameState = 'start' | 'playing' | 'gameover';
+type GameState = 'intro' | 'playing';
 
 function App() {
-  const [gameState, setGameState] = useState<GameState>('start');
-  const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState(() => {
-    const saved = localStorage.getItem('spaceDefenderHighScore');
-    return saved ? parseInt(saved) : 0;
-  });
+  const [gameState, setGameState] = useState<GameState>('intro');
+  const [message, setMessage] = useState<string>('');
 
-  const handleStart = () => {
-    setScore(0);
-    setGameState('playing');
-  };
-
-  const handleGameOver = (finalScore: number) => {
-    setScore(finalScore);
-    if (finalScore > highScore) {
-      setHighScore(finalScore);
-      localStorage.setItem('spaceDefenderHighScore', finalScore.toString());
-    }
-    setGameState('gameover');
+  const showMessage = (msg: string) => {
+    setMessage(msg);
+    setTimeout(() => setMessage(''), 3000);
   };
 
   return (
-    <div className="w-full h-screen bg-gray-900 overflow-hidden flex items-center justify-center">
-      {gameState === 'start' && <StartScreen onStart={handleStart} highScore={highScore} />}
-      {gameState === 'playing' && <Game onGameOver={handleGameOver} />}
-      {gameState === 'gameover' && (
-        <GameOverScreen score={score} highScore={highScore} onRestart={handleStart} />
-      )}
+    <div className="w-full h-screen bg-black overflow-hidden flex items-center justify-center">
+      {gameState === 'intro' && <IntroScreen onStart={() => setGameState('playing')} />}
+      {gameState === 'playing' && <Room message={message} showMessage={showMessage} />}
     </div>
   );
 }
