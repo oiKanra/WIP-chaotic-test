@@ -55,6 +55,7 @@ const INTEREST_POINTS: Record<RoomId, Array<{ id: string; x: number; y: number; 
 
 function App() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const roomRef = useRef<HTMLDivElement>(null);
   const [currentRoom, setCurrentRoom] = useState<RoomId>('living');
   const [mouse, setMouse] = useState({ x: 400, y: 400 });
   const [moving, setMoving] = useState(false);
@@ -137,8 +138,8 @@ function App() {
   }, [transitioning]);
 
   const onMove = useCallback((e: React.MouseEvent) => {
-    if (!containerRef.current || transitioning) return;
-    const r = containerRef.current.getBoundingClientRect();
+    if (!roomRef.current || transitioning) return;
+    const r = roomRef.current.getBoundingClientRect();
     setMouse({ x: e.clientX - r.left, y: e.clientY - r.top });
     setMoving(true);
     clearTimeout(timerRef.current);
@@ -158,11 +159,15 @@ function App() {
     <div
       ref={containerRef}
       className="w-full h-screen bg-white overflow-hidden relative flex items-center justify-center"
-      onMouseMove={onMove}
-      onClick={handleClick}
       style={{ cursor: transitioning ? 'wait' : 'none' }}
     >
-      <div className={`relative transition-opacity duration-300 ${transitioning ? 'opacity-0' : 'opacity-100'}`} style={{ width: 800, height: 600 }}>
+      <div
+        ref={roomRef}
+        className={`relative transition-opacity duration-300 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
+        style={{ width: 800, height: 600 }}
+        onMouseMove={onMove}
+        onClick={handleClick}
+      >
 
         {/* ═══════ ПОЛ ═══════ */}
         <div className="absolute" style={{
