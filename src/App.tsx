@@ -129,7 +129,7 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
   living: {
     name: 'Гостиная',
     doors: [
-      { id: 'door-left', side: 'left', targetRoom: 'kitchen', label: '→ Кухня', position: 0.3 },
+      { id: 'door-left', side: 'left', targetRoom: 'kitchen', label: '→ Кухня', position: 0.8 },
       { id: 'door-right', side: 'right', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
     ],
     objects: [
@@ -143,7 +143,7 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
     name: 'Кухня',
     doors: [
       { id: 'door-left', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.3 },
-      { id: 'door-right', side: 'right', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
+      { id: 'door-right', side: 'right', targetRoom: 'corridor', label: '→ Коридор', position: 0.8 },
     ],
     objects: [
       { id: 'kitchen-table', a: 0.55, b: 0.65, label: '🧀 Кухонный стол', action: 'Поесть сыр' },
@@ -154,10 +154,10 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
   corridor: {
     name: 'Коридор',
     doors: [
-      { id: 'door-1', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.2 },
-      { id: 'door-2', side: 'right', targetRoom: 'kitchen', label: '→ Кухня', position: 0.2 },
-      { id: 'door-3', side: 'left', targetRoom: 'cheese-storage', label: '→ Склад сыра 🧀', position: 0.7 },
-      { id: 'door-4', side: 'right', targetRoom: 'kitchen', label: '→ Ванная (скоро)', position: 0.7 },
+      { id: 'door-1', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.1 },
+      { id: 'door-2', side: 'right', targetRoom: 'kitchen', label: '→ Кухня', position: 0.1 },
+      { id: 'door-3', side: 'left', targetRoom: 'cheese-storage', label: '→ Склад сыра 🧀', position: 0.85 },
+      { id: 'door-4', side: 'right', targetRoom: 'kitchen', label: '→ Ванная (скоро)', position: 0.85 },
     ],
     objects: [
       { id: 'plant-1', a: 0.2, b: 0.5, label: '🌿 Растение', action: 'Посмотреть на растение' },
@@ -169,8 +169,8 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
   'cheese-storage': {
     name: 'Склад сыра 🧀',
     doors: [
-      { id: 'door-storage', side: 'left', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
-      { id: 'door-secret', side: 'right', targetRoom: 'kitchen', label: '→ Секретный ход', position: 0.5 },
+      { id: 'door-storage', side: 'left', targetRoom: 'corridor', label: '→ Коридор', position: 0.15 },
+      { id: 'door-secret', side: 'right', targetRoom: 'kitchen', label: '→ Секретный ход', position: 0.85 },
     ],
     objects: [
       { id: 'cheese-mountain', a: 0.5, b: 0.5, label: '🧀 Гора сыра', action: 'Нырнуть в гору сыра!' },
