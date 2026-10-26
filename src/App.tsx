@@ -7,7 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
   Камера вращается через drag (Shift+клик) или кнопки.
 */
 
-type RoomId = 'living' | 'kitchen' | 'corridor' | 'cheese-storage';
+type RoomId = 'living' | 'kitchen' | 'corridor' | 'cheese-storage' | 'yard';
 
 /* ── Изометрические хелперы с учётом поворота ── */
 function iso(a: number, b: number, h = 0, rotation = 0): [number, number] {
@@ -157,7 +157,7 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
       { id: 'door-1', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.1 },
       { id: 'door-2', side: 'right', targetRoom: 'kitchen', label: '→ Кухня', position: 0.1 },
       { id: 'door-3', side: 'left', targetRoom: 'cheese-storage', label: '→ Склад сыра 🧀', position: 0.85 },
-      { id: 'door-4', side: 'right', targetRoom: 'kitchen', label: '→ Ванная (скоро)', position: 0.85 },
+      { id: 'door-yard', side: 'right', targetRoom: 'yard', label: '→ Во двор 🎉', position: 0.5 },
     ],
     objects: [
       { id: 'plant-1', a: 0.2, b: 0.5, label: '🌿 Растение', action: 'Посмотреть на растение' },
@@ -177,6 +177,18 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
       { id: 'cheese-wheel', a: 0.25, b: 0.35, label: '🧀 Сырное колесо', action: 'Покатить колесо сыра' },
       { id: 'cheese-shelf', a: 0.75, b: 0.35, label: '📦 Полка с сыром', action: 'Выбрать лучший сыр' },
       { id: 'cheese-fountain', a: 0.5, b: 0.75, label: '⛲ Сырный фонтан', action: 'Искупаться в сыре' },
+    ],
+  },
+  yard: {
+    name: 'Двор 🎉',
+    doors: [
+      { id: 'door-yard', side: 'right', targetRoom: 'corridor', label: '→ В дом', position: 0.3 },
+    ],
+    objects: [
+      { id: 'birthday-cake', a: 0.5, b: 0.4, label: '🎂 Торт', action: 'Задувать свечи!' },
+      { id: 'gifts', a: 0.3, b: 0.6, label: '🎁 Подарки', action: 'Открыть подарок' },
+      { id: 'balloons', a: 0.7, b: 0.3, label: '🎈 Шарики', action: 'Полопать шарики' },
+      { id: 'friends', a: 0.5, b: 0.7, label: '🐭 Друзья', action: 'Праздновать вместе!' },
     ],
   },
 };
@@ -203,6 +215,11 @@ const OBSTACLES: Record<RoomId, Obstacle[]> = {
     { a1: 0.15, b1: 0.25, a2: 0.35, b2: 0.45 }, // Сырное колесо
     { a1: 0.65, b1: 0.25, a2: 0.85, b2: 0.45 }, // Полка с сыром
     { a1: 0.4, b1: 0.65, a2: 0.6, b2: 0.85 }, // Сырный фонтан
+  ],
+  yard: [
+    { a1: 0.4, b1: 0.3, a2: 0.6, b2: 0.5 }, // Стол с тортом
+    { a1: 0.2, b1: 0.5, a2: 0.4, b2: 0.7 }, // Подарки
+    { a1: 0.4, b1: 0.6, a2: 0.6, b2: 0.8 }, // Друзья
   ],
 };
 
@@ -379,6 +396,12 @@ function App() {
       if (isCheeseStorage) {
         totalRate += 0.5; // Базовое счастье от окружения
       }
+      
+      // Во дворе тоже очень весело!
+      const isYard = currentRoom === 'yard';
+      if (isYard) {
+        totalRate += 0.4; // Праздничное настроение
+      }
 
       for (const obj of objects) {
         const dist = Math.sqrt((mousePos.a - obj.a) ** 2 + (mousePos.b - obj.b) ** 2);
@@ -476,8 +499,33 @@ function App() {
         setMessage('Мур-мур! Барсик доволен! 🐱💕');
         setTimeout(() => setMessage(null), 2000);
       }
+      
+      // День рождения!
+      if (currentRoom === 'yard') {
+        if (obj.id === 'birthday-cake') {
+          moodRef.current = Math.min(100, moodRef.current + 20);
+          setMood(moodRef.current);
+          setMessage('🎂 Ура! Задули свечи! С Днём Рождения! 🎉');
+          setTimeout(() => setMessage(null), 3000);
+        } else if (obj.id === 'gifts') {
+          moodRef.current = Math.min(100, moodRef.current + 15);
+          setMood(moodRef.current);
+          setMessage('🎁 Wow! Новый подарок! 🎀');
+          setTimeout(() => setMessage(null), 2000);
+        } else if (obj.id === 'balloons') {
+          moodRef.current = Math.min(100, moodRef.current + 10);
+          setMood(moodRef.current);
+          setMessage('🎈 Поп! Весело! 🎊');
+          setTimeout(() => setMessage(null), 2000);
+        } else if (obj.id === 'friends') {
+          moodRef.current = Math.min(100, moodRef.current + 18);
+          setMood(moodRef.current);
+          setMessage('🐭 Друзья собрались! Праздник! 🥳');
+          setTimeout(() => setMessage(null), 2500);
+        }
+      }
     }, newPath.length * 150);
-  }, [mousePos, currentRoom, transitioning, isMoving, cheeseLeft]);
+  }, [mousePos, currentRoom, transitioning, isMoving, cheeseLeft, carryingCheese]);
 
   /* Клик на дверь */
   const handleDoorClick = useCallback((door: Door) => {
@@ -544,11 +592,13 @@ function App() {
   const moodLabel = mood > 80 ? 'Счастлива!' : mood > 60 ? 'Довольна' : mood > 40 ? 'Нормально' : mood > 20 ? 'Скучно...' : 'Грустно...';
   const mouseEmoji = currentRoom === 'cheese-storage' 
     ? '🐁🧀' 
-    : activeObject === 'kitchen-table' && cheeseLeft > 0 
-      ? '🐁✨' 
-      : mood > 80 
-        ? '🐁💕' 
-        : '🐁';
+    : currentRoom === 'yard'
+      ? '🐁🎉'
+      : activeObject === 'kitchen-table' && cheeseLeft > 0 
+        ? '🐁✨' 
+        : mood > 80 
+          ? '🐁💕' 
+          : '🐁';
   const roomConfig = ROOMS[currentRoom];
 
   return (
@@ -643,8 +693,8 @@ function App() {
         {/* Пол */}
         <polygon 
           points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} 
-          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : currentRoom === 'corridor' ? '#bcaaa4' : '#FFE0B2'} 
-          stroke="#c8c0b0" 
+          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : currentRoom === 'corridor' ? '#bcaaa4' : currentRoom === 'cheese-storage' ? '#FFE0B2' : '#81C784'} 
+          stroke={currentRoom === 'yard' ? '#66BB6A' : '#c8c0b0'}
           strokeWidth="0.5"
           onClick={handleFloorClick}
           style={{ cursor: 'pointer' }}
@@ -660,9 +710,39 @@ function App() {
         })}
 
         {/* Стены */}
-        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : currentRoom === 'corridor' ? '#d7ccc8' : '#FFECB3'} />
-        <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : currentRoom === 'corridor' ? '#c8b8b0' : '#FFE082'} />
-        <line x1={iso(1, 0, 0, rotation)[0]} y1={iso(1, 0, 0, rotation)[1]} x2={iso(1, 0, 150, rotation)[0]} y2={iso(1, 0, 150, rotation)[1]} stroke="#b8b0a5" strokeWidth="1" />
+        {currentRoom !== 'yard' && (
+          <>
+            <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : currentRoom === 'corridor' ? '#d7ccc8' : '#FFECB3'} />
+            <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : currentRoom === 'corridor' ? '#c8b8b0' : '#FFE082'} />
+            <line x1={iso(1, 0, 0, rotation)[0]} y1={iso(1, 0, 0, rotation)[1]} x2={iso(1, 0, 150, rotation)[0]} y2={iso(1, 0, 150, rotation)[1]} stroke="#b8b0a5" strokeWidth="1" />
+          </>
+        )}
+        {/* Забор для двора */}
+        {currentRoom === 'yard' && (
+          <>
+            <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 30, rotation), iso(0, 0, 30, rotation)])} fill="#8D6E63" opacity="0.6" />
+            <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 30, rotation), iso(1, 0, 30, rotation)])} fill="#795548" opacity="0.6" />
+            {/* Рейки забора */}
+            {Array.from({ length: 8 }).map((_, i) => (
+              <line key={`fence-${i}`}
+                x1={iso(i / 8 + 0.06, 0, 0, rotation)[0]} 
+                y1={iso(i / 8 + 0.06, 0, 0, rotation)[1]}
+                x2={iso(i / 8 + 0.06, 0, 30, rotation)[0]} 
+                y2={iso(i / 8 + 0.06, 0, 30, rotation)[1]}
+                stroke="#6D4C41" strokeWidth="2"
+              />
+            ))}
+            {Array.from({ length: 8 }).map((_, i) => (
+              <line key={`fence-r-${i}`}
+                x1={iso(1, i / 8 + 0.06, 0, rotation)[0]} 
+                y1={iso(1, i / 8 + 0.06, 0, rotation)[1]}
+                x2={iso(1, i / 8 + 0.06, 30, rotation)[0]} 
+                y2={iso(1, i / 8 + 0.06, 30, rotation)[1]}
+                stroke="#5D4037" strokeWidth="2"
+              />
+            ))}
+          </>
+        )}
 
         {/* Двери */}
         {roomConfig.doors.map(door => {
@@ -885,6 +965,112 @@ function App() {
           </g>
         )}
 
+        {currentRoom === 'yard' && (
+          <g>
+            {/* Стол с тортом (центр) */}
+            {isoBox(0.4, 0.3, 0.2, 0.2, 25, { top: '#D7CCC8', left: '#A1887F', right: '#BCAAA4' }, rotation)}
+            {/* Скатерть */}
+            <polygon 
+              points={isoPoly([iso(0.38, 0.28, 25, rotation), iso(0.62, 0.28, 25, rotation), iso(0.62, 0.52, 25, rotation), iso(0.38, 0.52, 25, rotation)])} 
+              fill="#FF80AB" 
+              opacity="0.6"
+            />
+            {/* Торт */}
+            <ellipse cx={iso(0.5, 0.4, 26, rotation)[0]} cy={iso(0.5, 0.4, 26, rotation)[1]} rx="12" ry="6" fill="#FFCCBC" />
+            <ellipse cx={iso(0.5, 0.4, 30, rotation)[0]} cy={iso(0.5, 0.4, 30, rotation)[1]} rx="10" ry="5" fill="#F8BBD0" />
+            <ellipse cx={iso(0.5, 0.4, 34, rotation)[0]} cy={iso(0.5, 0.4, 34, rotation)[1]} rx="8" ry="4" fill="#FFCCBC" />
+            {/* Глазурь */}
+            <ellipse cx={iso(0.5, 0.4, 35, rotation)[0]} cy={iso(0.5, 0.4, 35, rotation)[1]} rx="8" ry="4" fill="#FFFFFF" opacity="0.8" />
+            {/* Свечки */}
+            <rect x={iso(0.48, 0.38, 35, rotation)[0] - 1} y={iso(0.48, 0.38, 35, rotation)[1] - 8} width="2" height="8" fill="#FF5722" />
+            <rect x={iso(0.5, 0.4, 35, rotation)[0] - 1} y={iso(0.5, 0.4, 35, rotation)[1] - 10} width="2" height="10" fill="#FF9800" />
+            <rect x={iso(0.52, 0.42, 35, rotation)[0] - 1} y={iso(0.52, 0.42, 35, rotation)[1] - 8} width="2" height="8" fill="#FFEB3B" />
+            {/* Огоньки */}
+            <circle cx={iso(0.48, 0.38, 44, rotation)[0]} cy={iso(0.48, 0.38, 44, rotation)[1]} r="2" fill="#FFEB3B">
+              <animate attributeName="opacity" values="1;0.5;1" dur="0.5s" repeatCount="indefinite" />
+            </circle>
+            <circle cx={iso(0.5, 0.4, 46, rotation)[0]} cy={iso(0.5, 0.4, 46, rotation)[1]} r="2.5" fill="#FF9800">
+              <animate attributeName="opacity" values="1;0.6;1" dur="0.7s" repeatCount="indefinite" />
+            </circle>
+            <circle cx={iso(0.52, 0.42, 44, rotation)[0]} cy={iso(0.52, 0.42, 44, rotation)[1]} r="2" fill="#FFEB3B">
+              <animate attributeName="opacity" values="1;0.5;1" dur="0.6s" repeatCount="indefinite" />
+            </circle>
+            
+            {/* Подарки (слева) */}
+            {isoBox(0.25, 0.55, 0.1, 0.1, 12, { top: '#E91E63', left: '#C2185B', right: '#D81B60' }, rotation)}
+            <line x1={iso(0.3, 0.55, 12, rotation)[0]} y1={iso(0.3, 0.55, 12, rotation)[1]} x2={iso(0.3, 0.65, 12, rotation)[0]} y2={iso(0.3, 0.65, 12, rotation)[1]} stroke="#FFEB3B" strokeWidth="1.5" />
+            <line x1={iso(0.25, 0.6, 12, rotation)[0]} y1={iso(0.25, 0.6, 12, rotation)[1]} x2={iso(0.35, 0.6, 12, rotation)[0]} y2={iso(0.35, 0.6, 12, rotation)[1]} stroke="#FFEB3B" strokeWidth="1.5" />
+            {isoBox(0.22, 0.62, 0.08, 0.08, 10, { top: '#2196F3', left: '#1976D2', right: '#1E88E5' }, rotation)}
+            <line x1={iso(0.26, 0.62, 10, rotation)[0]} y1={iso(0.26, 0.62, 10, rotation)[1]} x2={iso(0.26, 0.7, 10, rotation)[0]} y2={iso(0.26, 0.7, 10, rotation)[1]} stroke="#FFFFFF" strokeWidth="1" />
+            {isoBox(0.32, 0.6, 0.09, 0.09, 14, { top: '#4CAF50', left: '#388E3C', right: '#43A047' }, rotation)}
+            <line x1={iso(0.365, 0.6, 14, rotation)[0]} y1={iso(0.365, 0.6, 14, rotation)[1]} x2={iso(0.365, 0.69, 14, rotation)[0]} y2={iso(0.365, 0.69, 14, rotation)[1]} stroke="#FF9800" strokeWidth="1.2" />
+            
+            {/* Шарики (справа) */}
+            <circle cx={iso(0.7, 0.3, 50, rotation)[0]} cy={iso(0.7, 0.3, 50, rotation)[1]} r="8" fill="#F44336" opacity="0.8" />
+            <line x1={iso(0.7, 0.3, 50, rotation)[0]} y1={iso(0.7, 0.3, 50, rotation)[1] + 8} x2={iso(0.7, 0.3, 0, rotation)[0]} y2={iso(0.7, 0.3, 0, rotation)[1]} stroke="#999" strokeWidth="0.5" />
+            <circle cx={iso(0.75, 0.35, 55, rotation)[0]} cy={iso(0.75, 0.35, 55, rotation)[1]} r="7" fill="#2196F3" opacity="0.8" />
+            <line x1={iso(0.75, 0.35, 55, rotation)[0]} y1={iso(0.75, 0.35, 55, rotation)[1] + 7} x2={iso(0.75, 0.35, 0, rotation)[0]} y2={iso(0.75, 0.35, 0, rotation)[1]} stroke="#999" strokeWidth="0.5" />
+            <circle cx={iso(0.68, 0.38, 45, rotation)[0]} cy={iso(0.68, 0.38, 45, rotation)[1]} r="6" fill="#FFEB3B" opacity="0.8" />
+            <line x1={iso(0.68, 0.38, 45, rotation)[0]} y1={iso(0.68, 0.38, 45, rotation)[1] + 6} x2={iso(0.68, 0.38, 0, rotation)[0]} y2={iso(0.68, 0.38, 0, rotation)[1]} stroke="#999" strokeWidth="0.5" />
+            <circle cx={iso(0.72, 0.28, 60, rotation)[0]} cy={iso(0.72, 0.28, 60, rotation)[1]} r="7" fill="#9C27B0" opacity="0.8" />
+            <line x1={iso(0.72, 0.28, 60, rotation)[0]} y1={iso(0.72, 0.28, 60, rotation)[1] + 7} x2={iso(0.72, 0.28, 0, rotation)[0]} y2={iso(0.72, 0.28, 0, rotation)[1]} stroke="#999" strokeWidth="0.5" />
+            
+            {/* Друзья-мышки (снизу) */}
+            {/* Мышка 1 */}
+            <g transform={`translate(${iso(0.45, 0.7, 0, rotation)[0]}, ${iso(0.45, 0.7, 0, rotation)[1]})`}>
+              <ellipse cx="0" cy="0" rx="6" ry="4" fill="#9E9E9E" />
+              <circle cx="5" cy="-2" r="4" fill="#9E9E9E" />
+              <circle cx="3" cy="-4" r="2" fill="#FFCDD2" />
+              <circle cx="7" cy="-4" r="2" fill="#FFCDD2" />
+              <circle cx="4" cy="-2" r="0.8" fill="#000" />
+              <circle cx="6" cy="-2" r="0.8" fill="#000" />
+            </g>
+            {/* Мышка 2 */}
+            <g transform={`translate(${iso(0.55, 0.72, 0, rotation)[0]}, ${iso(0.55, 0.72, 0, rotation)[1]})`}>
+              <ellipse cx="0" cy="0" rx="6" ry="4" fill="#795548" />
+              <circle cx="-5" cy="-2" r="4" fill="#795548" />
+              <circle cx="-3" cy="-4" r="2" fill="#FFCDD2" />
+              <circle cx="-7" cy="-4" r="2" fill="#FFCDD2" />
+              <circle cx="-4" cy="-2" r="0.8" fill="#000" />
+              <circle cx="-6" cy="-2" r="0.8" fill="#000" />
+            </g>
+            {/* Мышка 3 */}
+            <g transform={`translate(${iso(0.5, 0.75, 0, rotation)[0]}, ${iso(0.5, 0.75, 0, rotation)[1]})`}>
+              <ellipse cx="0" cy="0" rx="5" ry="3.5" fill="#FFB74D" />
+              <circle cx="4" cy="-1.5" r="3.5" fill="#FFB74D" />
+              <circle cx="2.5" cy="-3" r="1.8" fill="#FFCDD2" />
+              <circle cx="5.5" cy="-3" r="1.8" fill="#FFCDD2" />
+              <circle cx="3.5" cy="-1.5" r="0.7" fill="#000" />
+              <circle cx="5" cy="-1.5" r="0.7" fill="#000" />
+            </g>
+            
+            {/* Гирлянда */}
+            <path 
+              d={`M ${iso(0.2, 0.2, 40, rotation)[0]} ${iso(0.2, 0.2, 40, rotation)[1]} 
+                  Q ${iso(0.35, 0.25, 35, rotation)[0]} ${iso(0.35, 0.25, 35, rotation)[1]} 
+                    ${iso(0.5, 0.2, 38, rotation)[0]} ${iso(0.5, 0.2, 38, rotation)[1]}
+                  Q ${iso(0.65, 0.25, 35, rotation)[0]} ${iso(0.65, 0.25, 35, rotation)[1]} 
+                    ${iso(0.8, 0.2, 40, rotation)[0]} ${iso(0.8, 0.2, 40, rotation)[1]}`}
+              stroke="#FF9800" 
+              strokeWidth="1.5" 
+              fill="none"
+            />
+            {/* Флажки на гирлянде */}
+            <polygon points={`${iso(0.3, 0.22, 37, rotation)[0]},${iso(0.3, 0.22, 37, rotation)[1]} ${iso(0.3, 0.22, 32, rotation)[0]},${iso(0.3, 0.22, 32, rotation)[1]} ${iso(0.32, 0.23, 37, rotation)[0]},${iso(0.32, 0.23, 37, rotation)[1]}`} fill="#F44336" />
+            <polygon points={`${iso(0.4, 0.21, 36, rotation)[0]},${iso(0.4, 0.21, 36, rotation)[1]} ${iso(0.4, 0.21, 31, rotation)[0]},${iso(0.4, 0.21, 31, rotation)[1]} ${iso(0.42, 0.22, 36, rotation)[0]},${iso(0.42, 0.22, 36, rotation)[1]}`} fill="#2196F3" />
+            <polygon points={`${iso(0.6, 0.21, 36, rotation)[0]},${iso(0.6, 0.21, 36, rotation)[1]} ${iso(0.6, 0.21, 31, rotation)[0]},${iso(0.6, 0.21, 31, rotation)[1]} ${iso(0.62, 0.22, 36, rotation)[0]},${iso(0.62, 0.22, 36, rotation)[1]}`} fill="#4CAF50" />
+            <polygon points={`${iso(0.7, 0.22, 37, rotation)[0]},${iso(0.7, 0.22, 37, rotation)[1]} ${iso(0.7, 0.22, 32, rotation)[0]},${iso(0.7, 0.22, 32, rotation)[1]} ${iso(0.72, 0.23, 37, rotation)[0]},${iso(0.72, 0.23, 37, rotation)[1]}`} fill="#FFEB3B" />
+            
+            {/* Конфетти */}
+            <rect x={iso(0.3, 0.5, 1, rotation)[0]} y={iso(0.3, 0.5, 1, rotation)[1]} width="3" height="3" fill="#E91E63" transform={`rotate(${45} ${iso(0.3, 0.5, 1, rotation)[0]} ${iso(0.3, 0.5, 1, rotation)[1]})`} />
+            <rect x={iso(0.6, 0.5, 1, rotation)[0]} y={iso(0.6, 0.5, 1, rotation)[1]} width="3" height="3" fill="#2196F3" transform={`rotate(${30} ${iso(0.6, 0.5, 1, rotation)[0]} ${iso(0.6, 0.5, 1, rotation)[1]})`} />
+            <rect x={iso(0.4, 0.8, 1, rotation)[0]} y={iso(0.4, 0.8, 1, rotation)[1]} width="3" height="3" fill="#4CAF50" transform={`rotate(${60} ${iso(0.4, 0.8, 1, rotation)[0]} ${iso(0.4, 0.8, 1, rotation)[1]})`} />
+            <rect x={iso(0.7, 0.6, 1, rotation)[0]} y={iso(0.7, 0.6, 1, rotation)[1]} width="3" height="3" fill="#FFEB3B" transform={`rotate(${15} ${iso(0.7, 0.6, 1, rotation)[0]} ${iso(0.7, 0.6, 1, rotation)[1]})`} />
+            <circle cx={iso(0.35, 0.45, 1, rotation)[0]} cy={iso(0.35, 0.45, 1, rotation)[1]} r="2" fill="#9C27B0" />
+            <circle cx={iso(0.65, 0.55, 1, rotation)[0]} cy={iso(0.65, 0.55, 1, rotation)[1]} r="2" fill="#FF5722" />
+          </g>
+        )}
+
         {/* Кликабельные объекты */}
         {roomConfig.objects.map(obj => (
           <circle
@@ -935,7 +1121,7 @@ function App() {
       </svg>
 
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
-        кликай на объекты • на складе сыра: [1] поесть или [2] забрать на кухню • зажми колёсико для поворота
+        кликай на объекты • на складе: [1] поесть [2] забрать • зажми колёсико для поворота
       </div>
     </div>
   );
