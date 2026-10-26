@@ -163,6 +163,7 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
       { id: 'plant-1', a: 0.2, b: 0.5, label: '🌿 Растение', action: 'Посмотреть на растение' },
       { id: 'painting', a: 0.5, b: 0.3, label: '🖼️ Картина', action: 'Рассмотреть картину' },
       { id: 'lamp', a: 0.8, b: 0.5, label: '💡 Лампа', action: 'Включить свет' },
+      { id: 'cat', a: 0.5, b: 0.7, label: '🐱 Котик Барсик', action: 'Погладить котика' },
     ],
   },
   'cheese-storage': {
@@ -290,6 +291,7 @@ function App() {
   const [isMoving, setIsMoving] = useState(false);
   const [mood, setMood] = useState(50);
   const [cheeseLeft, setCheeseLeft] = useState(5);
+  const [carryingCheese, setCarryingCheese] = useState(0);
   const [activeObject, setActiveObject] = useState<string | null>(null);
   const [transitioning, setTransitioning] = useState(false);
   const [hoveredObject, setHoveredObject] = useState<string | null>(null);
@@ -380,7 +382,11 @@ function App() {
       for (const obj of objects) {
         const dist = Math.sqrt((mousePos.a - obj.a) ** 2 + (mousePos.b - obj.b) ** 2);
         if (dist < 0.15) {
-          const rate = isCheeseStorage ? 0.6 : 0.3; // На складе сыра радость сильнее
+          let rate = isCheeseStorage ? 0.6 : 0.3; // На складе сыра радость сильнее
+          // Котик тоже радует мышь
+          if (obj.id === 'cat') {
+            rate = 0.5;
+          }
           totalRate += rate * (1 - dist / 0.15);
           zone = obj.id;
         }
@@ -405,6 +411,38 @@ function App() {
   const handleObjectClick = useCallback((obj: ClickableObject) => {
     if (transitioning || isMoving) return;
 
+    // Для объектов на складе сыра показываем диалог выбора действия
+    if (currentRoom === 'cheese-storage' && ['cheese-mountain', 'cheese-wheel', 'cheese-shelf', 'cheese-fountain'].includes(obj.id)) {
+      setTargetPos({ a: obj.a, b: obj.b });
+      const newPath = findPath(mousePos, { a: obj.a, b: obj.b }, OBSTACLES[currentRoom]);
+      setPath(newPath);
+      setPathIndex(0);
+      setIsMoving(true);
+      
+      setTimeout(() => {
+        setMessage(`Выберите действие: [1] Поесть 🧀 или [2] Забрать на кухню 📦`);
+        // Устанавливаем обработчик клавиш для выбора
+        const handleKeyPress = (e: KeyboardEvent) => {
+          if (e.key === '1') {
+            // Поесть
+            moodRef.current = Math.min(100, moodRef.current + 10);
+            setMood(moodRef.current);
+            setMessage('Ням-ням! Вкусный сыр! 🧀😋');
+            setTimeout(() => setMessage(null), 2000);
+            window.removeEventListener('keydown', handleKeyPress);
+          } else if (e.key === '2') {
+            // Забрать на кухню
+            setCarryingCheese(p => p + 1);
+            setMessage('Сыр забран! Несу на кухню 📦🧀');
+            setTimeout(() => setMessage(null), 2000);
+            window.removeEventListener('keydown', handleKeyPress);
+          }
+        };
+        window.addEventListener('keydown', handleKeyPress);
+      }, newPath.length * 150);
+      return;
+    }
+
     const newPath = findPath(mousePos, { a: obj.a, b: obj.b }, OBSTACLES[currentRoom]);
     setPath(newPath);
     setPathIndex(0);
@@ -415,10 +453,27 @@ function App() {
       setMessage(obj.action);
       setTimeout(() => setMessage(null), 2000);
 
-      if (obj.id === 'kitchen-table' && cheeseLeft > 0) {
-        setCheeseLeft(p => p - 1);
-        moodRef.current = Math.min(100, moodRef.current + 8);
+      if (obj.id === 'kitchen-table') {
+        if (carryingCheese > 0) {
+          // Положить сыр на кухню
+          setCheeseLeft(p => p + carryingCheese);
+          setCarryingCheese(0);
+          setMessage(`Сыр положен на кухню! Теперь тут ${cheeseLeft + carryingCheese} кусочков 🧀`);
+          setTimeout(() => setMessage(null), 2000);
+        } else if (cheeseLeft > 0) {
+          // Поесть сыр
+          setCheeseLeft(p => p - 1);
+          moodRef.current = Math.min(100, moodRef.current + 8);
+          setMood(moodRef.current);
+        }
+      }
+      
+      // Котик повышает настроение
+      if (obj.id === 'cat') {
+        moodRef.current = Math.min(100, moodRef.current + 12);
         setMood(moodRef.current);
+        setMessage('Мур-мур! Барсик доволен! 🐱💕');
+        setTimeout(() => setMessage(null), 2000);
       }
     }, newPath.length * 150);
   }, [mousePos, currentRoom, transitioning, isMoving, cheeseLeft]);
@@ -516,7 +571,12 @@ function App() {
         </div>
         {currentRoom === 'kitchen' && (
           <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow border border-gray-200">
-            <span className="text-xs text-gray-500">🧀 Сыр: {cheeseLeft > 0 ? '🧀'.repeat(cheeseLeft) : 'пусто 😢'}</span>
+            <span className="text-xs text-gray-500">🧀 Сыр на кухне: {cheeseLeft > 0 ? '🧀'.repeat(cheeseLeft) : 'пусто 😢'}</span>
+          </div>
+        )}
+        {carryingCheese > 0 && (
+          <div className="bg-yellow-50/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow border border-yellow-300">
+            <span className="text-xs text-yellow-700">📦 Несу сыр: {'🧀'.repeat(carryingCheese)}</span>
           </div>
         )}
       </div>
@@ -717,6 +777,37 @@ function App() {
               fill="#D32F2F" 
               opacity="0.5" 
             />
+            
+            {/* Котик Барсик */}
+            <g transform={`translate(${iso(0.5, 0.7, 0, rotation)[0]}, ${iso(0.5, 0.7, 0, rotation)[1]})`}>
+              {/* Тело */}
+              <ellipse cx="0" cy="0" rx="12" ry="8" fill="#FF9800" />
+              {/* Голова */}
+              <circle cx="10" cy="-5" r="8" fill="#FF9800" />
+              {/* Уши */}
+              <polygon points="6,-10 8,-15 10,-10" fill="#FF9800" />
+              <polygon points="10,-10 12,-15 14,-10" fill="#FF9800" />
+              <polygon points="7,-11 8,-14 9,-11" fill="#FFB74D" />
+              <polygon points="11,-11 12,-14 13,-11" fill="#FFB74D" />
+              {/* Глаза */}
+              <circle cx="8" cy="-6" r="1.5" fill="#4CAF50" />
+              <circle cx="12" cy="-6" r="1.5" fill="#4CAF50" />
+              <circle cx="8" cy="-6" r="0.8" fill="#000" />
+              <circle cx="12" cy="-6" r="0.8" fill="#000" />
+              {/* Нос */}
+              <polygon points="10,-3 9,-2 11,-2" fill="#E91E63" />
+              {/* Усы */}
+              <line x1="6" y1="-3" x2="2" y2="-4" stroke="#795548" strokeWidth="0.5" />
+              <line x1="6" y1="-2" x2="2" y2="-2" stroke="#795548" strokeWidth="0.5" />
+              <line x1="14" y1="-3" x2="18" y2="-4" stroke="#795548" strokeWidth="0.5" />
+              <line x1="14" y1="-2" x2="18" y2="-2" stroke="#795548" strokeWidth="0.5" />
+              {/* Хвост */}
+              <path d="M -10,0 Q -15,-5 -12,-10" stroke="#FF9800" strokeWidth="3" fill="none" strokeLinecap="round" />
+              {/* Полоски */}
+              <line x1="-5" y1="-3" x2="-5" y2="3" stroke="#E65100" strokeWidth="1" opacity="0.5" />
+              <line x1="0" y1="-4" x2="0" y2="4" stroke="#E65100" strokeWidth="1" opacity="0.5" />
+              <line x1="5" y1="-3" x2="5" y2="3" stroke="#E65100" strokeWidth="1" opacity="0.5" />
+            </g>
           </g>
         )}
 
@@ -843,7 +934,7 @@ function App() {
       </svg>
 
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
-        кликай в любое место на полу • зажми колёсико мыши для поворота камеры
+        кликай на объекты • на складе сыра: [1] поесть или [2] забрать на кухню • зажми колёсико для поворота
       </div>
     </div>
   );
