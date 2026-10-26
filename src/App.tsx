@@ -196,7 +196,7 @@ function App() {
 
   // Обработчики вращения камеры
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 2 || e.shiftKey) {
+    if (e.button === 1) { // Средняя кнопка (колёсико)
       e.preventDefault();
       setIsDragging(true);
       dragStartRef.current = { x: e.clientX, rotation };
@@ -400,7 +400,7 @@ function App() {
         onMouseMove={handleCameraMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onContextMenu={(e) => e.preventDefault()}
+        onAuxClick={(e) => { if (e.button === 1) e.preventDefault(); }}
         style={{ cursor: isDragging ? 'grabbing' : 'default' }}
       >
         {/* Пол */}
@@ -527,7 +527,7 @@ function App() {
       </svg>
 
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
-        кликай на объекты • shift+drag или кнопки для поворота камеры
+        кликай на объекты • зажми колёсико мыши для поворота камеры
       </div>
     </div>
   );
