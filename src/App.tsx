@@ -7,7 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
   Камера вращается через drag (Shift+клик) или кнопки.
 */
 
-type RoomId = 'living' | 'kitchen';
+type RoomId = 'living' | 'kitchen' | 'corridor';
 
 /* ── Изометрические хелперы с учётом поворота ── */
 function iso(a: number, b: number, h = 0, rotation = 0): [number, number] {
@@ -122,15 +122,15 @@ function darken(color: string, amount: number): string {
 }
 
 /* ── Конфигурация комнат ── */
-interface Door { id: string; side: 'left' | 'right'; targetRoom: RoomId; label: string }
+interface Door { id: string; side: 'left' | 'right'; targetRoom: RoomId; label: string; position?: number }
 interface ClickableObject { id: string; a: number; b: number; label: string; action: string }
 
 const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObject[] }> = {
   living: {
     name: 'Гостиная',
     doors: [
-      { id: 'door-left', side: 'left', targetRoom: 'kitchen', label: '→ Кухня' },
-      { id: 'door-right', side: 'right', targetRoom: 'kitchen', label: '→ Кухня' },
+      { id: 'door-left', side: 'left', targetRoom: 'kitchen', label: '→ Кухня', position: 0.3 },
+      { id: 'door-right', side: 'right', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
     ],
     objects: [
       { id: 'window', a: 0.32, b: 0.08, label: '🪟 Окно', action: 'Смотреть в окно' },
@@ -142,13 +142,27 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
   kitchen: {
     name: 'Кухня',
     doors: [
-      { id: 'door-left', side: 'left', targetRoom: 'living', label: '→ Гостиная' },
-      { id: 'door-right', side: 'right', targetRoom: 'living', label: '→ Гостиная' },
+      { id: 'door-left', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.3 },
+      { id: 'door-right', side: 'right', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
     ],
     objects: [
       { id: 'kitchen-table', a: 0.55, b: 0.65, label: '🧀 Кухонный стол', action: 'Поесть сыр' },
       { id: 'stove', a: 0.75, b: 0.35, label: '🔥 Плита', action: 'Посмотреть на плиту' },
       { id: 'fridge', a: 0.12, b: 0.35, label: '🧊 Холодильник', action: 'Открыть холодильник' },
+    ],
+  },
+  corridor: {
+    name: 'Коридор',
+    doors: [
+      { id: 'door-1', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.2 },
+      { id: 'door-2', side: 'right', targetRoom: 'kitchen', label: '→ Кухня', position: 0.2 },
+      { id: 'door-3', side: 'left', targetRoom: 'living', label: '→ Спальня (скоро)', position: 0.7 },
+      { id: 'door-4', side: 'right', targetRoom: 'kitchen', label: '→ Ванная (скоро)', position: 0.7 },
+    ],
+    objects: [
+      { id: 'plant-1', a: 0.2, b: 0.5, label: '🌿 Растение', action: 'Посмотреть на растение' },
+      { id: 'painting', a: 0.5, b: 0.3, label: '🖼️ Картина', action: 'Рассмотреть картину' },
+      { id: 'lamp', a: 0.8, b: 0.5, label: '💡 Лампа', action: 'Включить свет' },
     ],
   },
 };
@@ -164,6 +178,10 @@ const OBSTACLES: Record<RoomId, Obstacle[]> = {
     { a1: 0.45, b1: 0.55, a2: 0.65, b2: 0.70 },
     { a1: 0.70, b1: 0.25, a2: 0.85, b2: 0.43 },
     { a1: 0.05, b1: 0.25, a2: 0.18, b2: 0.40 },
+  ],
+  corridor: [
+    { a1: 0.15, b1: 0.45, a2: 0.25, b2: 0.55 }, // Растение
+    { a1: 0.75, b1: 0.45, a2: 0.85, b2: 0.55 }, // Лампа
   ],
 };
 
@@ -383,7 +401,8 @@ function App() {
   const handleDoorClick = useCallback((door: Door) => {
     if (transitioning || isMoving) return;
 
-    const doorPos = door.side === 'left' ? { a: 0.61, b: 0.05 } : { a: 0.95, b: 0.39 };
+    const pos = door.position || 0.5;
+    const doorPos = door.side === 'left' ? { a: pos, b: 0.05 } : { a: 0.95, b: pos };
     const newPath = findPath(mousePos, doorPos, OBSTACLES[currentRoom]);
     setPath(newPath);
     setPathIndex(0);
@@ -445,7 +464,9 @@ function App() {
   const roomConfig = ROOMS[currentRoom];
 
   return (
-    <div className="w-full h-screen bg-white overflow-hidden flex items-center justify-center">
+    <div className="w-full h-screen overflow-hidden flex items-center justify-center" style={{
+      background: 'linear-gradient(180deg, #87CEEB 0%, #98D8E8 100%)',
+    }}>
       {/* HUD */}
       <div className="absolute top-4 left-4 z-50 flex flex-col gap-2 pointer-events-none">
         <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-gray-200">
@@ -511,10 +532,25 @@ function App() {
         onAuxClick={(e) => { if (e.button === 1) e.preventDefault(); }}
         style={{ cursor: isDragging ? 'grabbing' : 'default' }}
       >
+        {/* Паттерн травы */}
+        <defs>
+          <pattern id="grass" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+            <rect width="20" height="20" fill="#7CB342" />
+            <path d="M2,20 Q3,15 2,10" stroke="#558B2F" strokeWidth="1" fill="none" />
+            <path d="M7,20 Q8,14 7,8" stroke="#689F38" strokeWidth="1" fill="none" />
+            <path d="M12,20 Q13,16 12,11" stroke="#558B2F" strokeWidth="1" fill="none" />
+            <path d="M17,20 Q18,13 17,7" stroke="#689F38" strokeWidth="1" fill="none" />
+            <circle cx="5" cy="12" r="0.5" fill="#9CCC65" />
+            <circle cx="15" cy="8" r="0.5" fill="#AED581" />
+          </pattern>
+        </defs>
+        
+        {/* Фон с травой */}
+        <rect width="800" height="600" fill="url(#grass)" />
         {/* Пол */}
         <polygon 
           points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} 
-          fill={currentRoom === 'living' ? '#e8e2d8' : '#ddd5c5'} 
+          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : '#bcaaa4'} 
           stroke="#c8c0b0" 
           strokeWidth="0.5"
           onClick={handleFloorClick}
@@ -531,20 +567,47 @@ function App() {
         })}
 
         {/* Стены */}
-        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : '#ebe5d8'} />
-        <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : '#e0d9cc'} />
+        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : '#d7ccc8'} />
+        <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : '#c8b8b0'} />
         <line x1={iso(1, 0, 0, rotation)[0]} y1={iso(1, 0, 0, rotation)[1]} x2={iso(1, 0, 150, rotation)[0]} y2={iso(1, 0, 150, rotation)[1]} stroke="#b8b0a5" strokeWidth="1" />
 
         {/* Двери */}
         {roomConfig.doors.map(door => {
           const doorH = 70;
           const isLeft = door.side === 'left';
-          const a1 = isLeft ? 0.55 : 1, a2 = isLeft ? 0.67 : 1;
-          const b1 = isLeft ? 0 : 0.33, b2 = isLeft ? 0 : 0.45;
-          const points = isLeft
-            ? [iso(a1, 0, 0, rotation), iso(a2, 0, 0, rotation), iso(a2, 0, doorH, rotation), iso(a1, 0, doorH, rotation)]
-            : [iso(1, b1, 0, rotation), iso(1, b2, 0, rotation), iso(1, b2, doorH, rotation), iso(1, b1, doorH, rotation)];
-          const handlePos = isLeft ? iso(0.64, 0, doorH * 0.45, rotation) : iso(1, 0.36, doorH * 0.45, rotation);
+          const pos = door.position || 0.5;
+          const doorWidth = 0.12;
+          
+          let points: [number, number][];
+          let handlePos: [number, number];
+          let labelPos: [number, number];
+          
+          if (isLeft) {
+            // Дверь на левой стене (b = 0)
+            const a1 = pos - doorWidth / 2;
+            const a2 = pos + doorWidth / 2;
+            points = [
+              iso(a1, 0, 0, rotation), 
+              iso(a2, 0, 0, rotation), 
+              iso(a2, 0, doorH, rotation), 
+              iso(a1, 0, doorH, rotation)
+            ];
+            handlePos = iso(a2 - 0.03, 0, doorH * 0.45, rotation);
+            labelPos = iso(pos, 0, doorH + 12, rotation);
+          } else {
+            // Дверь на правой стене (a = 1)
+            const b1 = pos - doorWidth / 2;
+            const b2 = pos + doorWidth / 2;
+            points = [
+              iso(1, b1, 0, rotation), 
+              iso(1, b2, 0, rotation), 
+              iso(1, b2, doorH, rotation), 
+              iso(1, b1, doorH, rotation)
+            ];
+            handlePos = iso(1, b1 + 0.03, doorH * 0.45, rotation);
+            labelPos = iso(1, pos, doorH + 12, rotation);
+          }
+          
           const isHovered = hoveredObject === door.id;
 
           return (
@@ -552,7 +615,7 @@ function App() {
               <polygon points={isoPoly(points)} fill={isHovered ? '#7B5236' : '#5A3520'} stroke="#3A1A08" strokeWidth="1.5" />
               <circle cx={handlePos[0]} cy={handlePos[1]} r="2.5" fill="#FFD700" />
               {isHovered && (
-                <text x={isLeft ? iso(0.61, 0, doorH + 12, rotation)[0] : iso(1, 0.39, doorH + 12, rotation)[0]} y={isLeft ? iso(0.61, 0, doorH + 12, rotation)[1] : iso(1, 0.39, doorH + 12, rotation)[1]} textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#22c55e">
+                <text x={labelPos[0]} y={labelPos[1]} textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#22c55e">
                   {door.label}
                 </text>
               )}
@@ -589,6 +652,39 @@ function App() {
             <ellipse cx={iso(0.74, 0.31, 41, rotation)[0]} cy={iso(0.74, 0.31, 41, rotation)[1]} rx="4" ry="2" fill="#222" stroke="#555" strokeWidth="0.5" />
             
             {isoBox(0.05, 0.25, 0.13, 0.15, 80, { top: '#f5f5f5', left: '#ddd', right: '#e0e0e0' }, rotation)}
+          </g>
+        )}
+
+        {currentRoom === 'corridor' && (
+          <g>
+            {/* Растение в горшке */}
+            {isoBox(0.15, 0.45, 0.1, 0.1, 15, { top: '#8D6E63', left: '#6D4C41', right: '#795548' }, rotation)}
+            <ellipse cx={iso(0.2, 0.5, 20, rotation)[0]} cy={iso(0.2, 0.5, 20, rotation)[1]} rx="8" ry="12" fill="#4CAF50" />
+            <ellipse cx={iso(0.18, 0.48, 25, rotation)[0]} cy={iso(0.18, 0.48, 25, rotation)[1]} rx="6" ry="8" fill="#66BB6A" />
+            <ellipse cx={iso(0.22, 0.52, 22, rotation)[0]} cy={iso(0.22, 0.52, 22, rotation)[1]} rx="5" ry="7" fill="#81C784" />
+            
+            {/* Картина на стене */}
+            <rect x={iso(0.5, 0.05, 60, rotation)[0] - 15} y={iso(0.5, 0.05, 60, rotation)[1] - 10} width="30" height="20" fill="#8D6E63" stroke="#5D4037" strokeWidth="2" />
+            <rect x={iso(0.5, 0.05, 60, rotation)[0] - 12} y={iso(0.5, 0.05, 60, rotation)[1] - 7} width="24" height="14" fill="#E3F2FD" />
+            <circle cx={iso(0.5, 0.05, 60, rotation)[0]} cy={iso(0.5, 0.05, 60, rotation)[1]} r="4" fill="#FFEB3B" />
+            
+            {/* Торшер */}
+            {isoBox(0.75, 0.45, 0.1, 0.1, 5, { top: '#424242', left: '#212121', right: '#303030' }, rotation)}
+            <line x1={iso(0.8, 0.5, 5, rotation)[0]} y1={iso(0.8, 0.5, 5, rotation)[1]} x2={iso(0.8, 0.5, 50, rotation)[0]} y2={iso(0.8, 0.5, 50, rotation)[1]} stroke="#616161" strokeWidth="2" />
+            <ellipse cx={iso(0.8, 0.5, 55, rotation)[0]} cy={iso(0.8, 0.5, 55, rotation)[1]} rx="10" ry="6" fill="#FFF9C4" />
+            <ellipse cx={iso(0.8, 0.5, 53, rotation)[0]} cy={iso(0.8, 0.5, 53, rotation)[1]} rx="8" ry="4" fill="#FFF176" opacity="0.6" />
+            
+            {/* Ковровая дорожка */}
+            <polygon 
+              points={isoPoly([iso(0.3, 0.2, 0.5, rotation), iso(0.7, 0.2, 0.5, rotation), iso(0.7, 0.8, 0.5, rotation), iso(0.3, 0.8, 0.5, rotation)])} 
+              fill="#C62828" 
+              opacity="0.7" 
+            />
+            <polygon 
+              points={isoPoly([iso(0.35, 0.25, 0.6, rotation), iso(0.65, 0.25, 0.6, rotation), iso(0.65, 0.75, 0.6, rotation), iso(0.35, 0.75, 0.6, rotation)])} 
+              fill="#D32F2F" 
+              opacity="0.5" 
+            />
           </g>
         )}
 
