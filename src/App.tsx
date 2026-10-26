@@ -33,20 +33,72 @@ function isoPoly(points: [number, number][]): string {
 
 function isoBox(
   a: number, b: number, w: number, d: number, h: number,
-  colors: { top: string; left: string; right: string },
+  colors: { top: string; left: string; right: string; bottom?: string; backLeft?: string; backRight?: string },
   rotation = 0
 ) {
   const p = (da: number, db: number, dh: number) => iso(a + da, b + db, dh, rotation);
-  const topFace = isoPoly([p(0, 0, h), p(w, 0, h), p(w, d, h), p(0, d, h)]);
-  const leftFace = isoPoly([p(0, 0, h), p(0, d, h), p(0, d, 0), p(0, 0, 0)]);
-  const rightFace = isoPoly([p(0, 0, h), p(w, 0, h), p(w, 0, 0), p(0, 0, 0)]);
+  
+  // Все 6 граней куба
+  const faces = [
+    { // Верхняя грань (z = h)
+      points: isoPoly([p(0, 0, h), p(w, 0, h), p(w, d, h), p(0, d, h)]),
+      color: colors.top,
+      depth: h
+    },
+    { // Нижняя грань (z = 0)
+      points: isoPoly([p(0, 0, 0), p(w, 0, 0), p(w, d, 0), p(0, d, 0)]),
+      color: colors.bottom || darken(colors.top, 0.3),
+      depth: 0
+    },
+    { // Передняя левая грань (a = 0)
+      points: isoPoly([p(0, 0, h), p(0, d, h), p(0, d, 0), p(0, 0, 0)]),
+      color: colors.left,
+      depth: (iso(a, b + d/2, h/2, rotation)[0] + iso(a, b + d/2, h/2, rotation)[1]) / 2
+    },
+    { // Передняя правая грань (b = 0)
+      points: isoPoly([p(0, 0, h), p(w, 0, h), p(w, 0, 0), p(0, 0, 0)]),
+      color: colors.right,
+      depth: (iso(a + w/2, b, h/2, rotation)[0] + iso(a + w/2, b, h/2, rotation)[1]) / 2
+    },
+    { // Задняя левая грань (a = w)
+      points: isoPoly([p(w, 0, h), p(w, d, h), p(w, d, 0), p(w, 0, 0)]),
+      color: colors.backLeft || darken(colors.left, 0.15),
+      depth: (iso(a + w, b + d/2, h/2, rotation)[0] + iso(a + w, b + d/2, h/2, rotation)[1]) / 2
+    },
+    { // Задняя правая грань (b = d)
+      points: isoPoly([p(0, d, h), p(w, d, h), p(w, d, 0), p(0, d, 0)]),
+      color: colors.backRight || darken(colors.right, 0.15),
+      depth: (iso(a + w/2, b + d, h/2, rotation)[0] + iso(a + w/2, b + d, h/2, rotation)[1]) / 2
+    },
+  ];
+  
+  // Сортируем по глубине (painter's algorithm) — дальние рисуем первыми
+  faces.sort((a, b) => a.depth - b.depth);
+  
   return (
     <g>
-      <polygon points={leftFace} fill={colors.left} />
-      <polygon points={rightFace} fill={colors.right} />
-      <polygon points={topFace} fill={colors.top} />
+      {faces.map((face, i) => (
+        <polygon key={i} points={face.points} fill={face.color} stroke={face.color} strokeWidth="0.5" />
+      ))}
     </g>
   );
+}
+
+// Вспомогательная функция для затемнения цвета
+function darken(color: string, amount: number): string {
+  let hex = color.replace('#', '');
+  // Обработка коротких hex (#abc → #aabbcc)
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  // Если не hex — возвращаем как есть
+  if (hex.length !== 6 || !/^[0-9a-fA-F]+$/.test(hex)) {
+    return color;
+  }
+  const r = Math.max(0, parseInt(hex.substring(0, 2), 16) * (1 - amount));
+  const g = Math.max(0, parseInt(hex.substring(2, 4), 16) * (1 - amount));
+  const b = Math.max(0, parseInt(hex.substring(4, 6), 16) * (1 - amount));
+  return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
 }
 
 /* ── Конфигурация комнат ── */
