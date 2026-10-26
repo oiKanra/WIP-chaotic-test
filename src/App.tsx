@@ -7,7 +7,11 @@ import { useState, useRef, useCallback, useEffect } from 'react';
   Камера вращается через drag (Shift+клик) или кнопки.
 */
 
-type RoomId = 'living' | 'kitchen' | 'corridor' | 'cheese-storage' | 'yard';
+import { Character } from './types';
+import { INITIAL_CHARACTERS, updateCharacterMovement, getCharactersInRoom } from './characters';
+import { GameState, INITIAL_GAME_STATE, updateTime, getTimeEmoji, getWeatherEmoji, getSkyColor, TimeOfDay } from './mechanics';
+
+type RoomId = 'living' | 'kitchen' | 'corridor' | 'cheese-storage' | 'yard' | 'bedroom' | 'garden' | 'library';
 
 /* ── Изометрические хелперы с учётом поворота ── */
 function iso(a: number, b: number, h = 0, rotation = 0): [number, number] {
@@ -158,6 +162,8 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
       { id: 'door-2', side: 'right', targetRoom: 'kitchen', label: '→ Кухня', position: 0.1 },
       { id: 'door-3', side: 'left', targetRoom: 'cheese-storage', label: '→ Склад сыра 🧀', position: 0.85 },
       { id: 'door-yard', side: 'right', targetRoom: 'yard', label: '→ Во двор 🎉', position: 0.5 },
+      { id: 'door-bedroom', side: 'left', targetRoom: 'bedroom', label: '→ Спальня 🛏️', position: 0.4 },
+      { id: 'door-library', side: 'right', targetRoom: 'library', label: '→ Библиотека 📚', position: 0.85 },
     ],
     objects: [
       { id: 'plant-1', a: 0.2, b: 0.5, label: '🌿 Растение', action: 'Посмотреть на растение' },
@@ -183,12 +189,46 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
     name: 'Двор 🎉',
     doors: [
       { id: 'door-yard', side: 'right', targetRoom: 'corridor', label: '→ В дом', position: 0.3 },
+      { id: 'door-garden', side: 'left', targetRoom: 'garden', label: '→ Сад 🌳', position: 0.85 },
     ],
     objects: [
       { id: 'birthday-cake', a: 0.5, b: 0.4, label: '🎂 Торт', action: 'Задувать свечи!' },
       { id: 'gifts', a: 0.3, b: 0.6, label: '🎁 Подарки', action: 'Открыть подарок' },
       { id: 'balloons', a: 0.7, b: 0.3, label: '🎈 Шарики', action: 'Полопать шарики' },
       { id: 'friends', a: 0.5, b: 0.7, label: '🐭 Друзья', action: 'Праздновать вместе!' },
+    ],
+  },
+  bedroom: {
+    name: 'Спальня 🛏️',
+    doors: [
+      { id: 'door-bedroom', side: 'left', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
+    ],
+    objects: [
+      { id: 'bed', a: 0.5, b: 0.5, label: '🛏️ Кровать', action: 'Поспать 💤' },
+      { id: 'alarm', a: 0.2, b: 0.3, label: '⏰ Будильник', action: 'Посмотреть время' },
+      { id: 'wardrobe', a: 0.8, b: 0.3, label: '👔 Шкаф', action: 'Выбрать одежду' },
+    ],
+  },
+  garden: {
+    name: 'Сад 🌳',
+    doors: [
+      { id: 'door-garden', side: 'right', targetRoom: 'yard', label: '→ Во двор', position: 0.5 },
+    ],
+    objects: [
+      { id: 'pond', a: 0.5, b: 0.5, label: '🌊 Пруд', action: 'Посмотреть на рыбок' },
+      { id: 'tree', a: 0.2, b: 0.3, label: '🌳 Дерево', action: 'Залезть на дерево' },
+      { id: 'carrots', a: 0.8, b: 0.7, label: '🥕 Грядки', action: 'Собрать морковку' },
+    ],
+  },
+  library: {
+    name: 'Библиотека 📚',
+    doors: [
+      { id: 'door-library', side: 'right', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
+    ],
+    objects: [
+      { id: 'books', a: 0.3, b: 0.4, label: '📚 Книги', action: 'Почитать книгу' },
+      { id: 'globe', a: 0.7, b: 0.3, label: '🌍 Глобус', action: 'Покрутить глобус' },
+      { id: 'ladder', a: 0.5, b: 0.7, label: '🪜 Лестница', action: 'Залезть на лестницу' },
     ],
   },
 };
@@ -220,6 +260,21 @@ const OBSTACLES: Record<RoomId, Obstacle[]> = {
     { a1: 0.4, b1: 0.3, a2: 0.6, b2: 0.5 }, // Стол с тортом
     { a1: 0.2, b1: 0.5, a2: 0.4, b2: 0.7 }, // Подарки
     { a1: 0.4, b1: 0.6, a2: 0.6, b2: 0.8 }, // Друзья
+  ],
+  bedroom: [
+    { a1: 0.4, b1: 0.4, a2: 0.6, b2: 0.6 }, // Кровать
+    { a1: 0.15, b1: 0.25, a2: 0.25, b2: 0.35 }, // Будильник
+    { a1: 0.75, b1: 0.25, a2: 0.85, b2: 0.35 }, // Шкаф
+  ],
+  garden: [
+    { a1: 0.4, b1: 0.4, a2: 0.6, b2: 0.6 }, // Пруд
+    { a1: 0.15, b1: 0.25, a2: 0.25, b2: 0.35 }, // Дерево
+    { a1: 0.75, b1: 0.65, a2: 0.85, b2: 0.75 }, // Грядки
+  ],
+  library: [
+    { a1: 0.2, b1: 0.35, a2: 0.4, b2: 0.45 }, // Книги
+    { a1: 0.65, b1: 0.25, a2: 0.75, b2: 0.35 }, // Глобус
+    { a1: 0.45, b1: 0.65, a2: 0.55, b2: 0.75 }, // Лестница
   ],
 };
 
@@ -315,6 +370,10 @@ function App() {
   const [hoveredObject, setHoveredObject] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   
+  // Новые состояния
+  const [characters, setCharacters] = useState<Character[]>(INITIAL_CHARACTERS);
+  const [gameState, setGameState] = useState<GameState>(INITIAL_GAME_STATE);
+  
   // Камера
   const [rotation, setRotation] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -383,6 +442,22 @@ function App() {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [isMoving, path, pathIndex]);
+
+  /* Обновление персонажей */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCharacters(prev => prev.map(updateCharacterMovement));
+    }, 50);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* Обновление времени и погоды */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setGameState(prev => updateTime(prev));
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
 
   /* Логика настроения */
   useEffect(() => {
@@ -603,12 +678,15 @@ function App() {
 
   return (
     <div className="w-full h-screen overflow-hidden flex items-center justify-center" style={{
-      background: 'linear-gradient(180deg, #87CEEB 0%, #98D8E8 100%)',
+      background: getSkyColor(gameState.timeOfDay, gameState.weather),
     }}>
       {/* HUD */}
       <div className="absolute top-4 left-4 z-50 flex flex-col gap-2 pointer-events-none">
         <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-gray-200">
           <span className="text-sm font-semibold text-gray-700">🏠 {roomConfig.name}</span>
+        </div>
+        <div className="bg-white/90 backdrop-blur-sm rounded-xl px-3 py-1.5 shadow border border-gray-200">
+          <span className="text-xs text-gray-500">{getTimeEmoji(gameState.timeOfDay)} {getWeatherEmoji(gameState.weather)}</span>
         </div>
         <div className="bg-white/90 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg border border-gray-200">
           <div className="flex items-center gap-2 mb-1.5">
@@ -693,8 +771,8 @@ function App() {
         {/* Пол */}
         <polygon 
           points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} 
-          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : currentRoom === 'corridor' ? '#bcaaa4' : currentRoom === 'cheese-storage' ? '#FFE0B2' : '#81C784'} 
-          stroke={currentRoom === 'yard' ? '#66BB6A' : '#c8c0b0'}
+          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : currentRoom === 'corridor' ? '#bcaaa4' : currentRoom === 'cheese-storage' ? '#FFE0B2' : currentRoom === 'yard' || currentRoom === 'garden' ? '#81C784' : currentRoom === 'bedroom' ? '#D1C4E9' : '#EFEBE9'} 
+          stroke={currentRoom === 'yard' || currentRoom === 'garden' ? '#66BB6A' : '#c8c0b0'}
           strokeWidth="0.5"
           onClick={handleFloorClick}
           style={{ cursor: 'pointer' }}
@@ -710,15 +788,15 @@ function App() {
         })}
 
         {/* Стены */}
-        {currentRoom !== 'yard' && (
+        {currentRoom !== 'yard' && currentRoom !== 'garden' && (
           <>
-            <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : currentRoom === 'corridor' ? '#d7ccc8' : '#FFECB3'} />
-            <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : currentRoom === 'corridor' ? '#c8b8b0' : '#FFE082'} />
+            <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : currentRoom === 'corridor' ? '#d7ccc8' : currentRoom === 'cheese-storage' ? '#FFECB3' : currentRoom === 'bedroom' ? '#E1BEE7' : '#EFEBE9'} />
+            <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : currentRoom === 'corridor' ? '#c8b8b0' : currentRoom === 'cheese-storage' ? '#FFE082' : currentRoom === 'bedroom' ? '#CE93D8' : '#D7CCC8'} />
             <line x1={iso(1, 0, 0, rotation)[0]} y1={iso(1, 0, 0, rotation)[1]} x2={iso(1, 0, 150, rotation)[0]} y2={iso(1, 0, 150, rotation)[1]} stroke="#b8b0a5" strokeWidth="1" />
           </>
         )}
-        {/* Забор для двора */}
-        {currentRoom === 'yard' && (
+        {/* Забор для двора и сада */}
+        {(currentRoom === 'yard' || currentRoom === 'garden') && (
           <>
             <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 30, rotation), iso(0, 0, 30, rotation)])} fill="#8D6E63" opacity="0.6" />
             <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 30, rotation), iso(1, 0, 30, rotation)])} fill="#795548" opacity="0.6" />
@@ -1071,6 +1149,85 @@ function App() {
           </g>
         )}
 
+        {currentRoom === 'bedroom' && (
+          <g>
+            {/* Кровать */}
+            {isoBox(0.4, 0.4, 0.2, 0.2, 15, { top: '#E1BEE7', left: '#CE93D8', right: '#BA68C8' }, rotation)}
+            {/* Подушка */}
+            <ellipse cx={iso(0.5, 0.45, 16, rotation)[0]} cy={iso(0.5, 0.45, 16, rotation)[1]} rx="8" ry="4" fill="#F3E5F5" />
+            {/* Одеяло */}
+            <polygon points={isoPoly([iso(0.4, 0.5, 15, rotation), iso(0.6, 0.5, 15, rotation), iso(0.6, 0.6, 15, rotation), iso(0.4, 0.6, 15, rotation)])} fill="#9C27B0" opacity="0.5" />
+            
+            {/* Будильник */}
+            {isoBox(0.18, 0.28, 0.05, 0.05, 8, { top: '#FF5722', left: '#E64A19', right: '#F4511E' }, rotation)}
+            <circle cx={iso(0.2, 0.3, 9, rotation)[0]} cy={iso(0.2, 0.3, 9, rotation)[1]} r="3" fill="#FFF" />
+            
+            {/* Шкаф */}
+            {isoBox(0.75, 0.25, 0.1, 0.1, 40, { top: '#8D6E63', left: '#6D4C41', right: '#795548' }, rotation)}
+            
+            {/* Тумбочка */}
+            {isoBox(0.3, 0.35, 0.08, 0.08, 12, { top: '#A1887F', left: '#8D6E63', right: '#795548' }, rotation)}
+          </g>
+        )}
+
+        {currentRoom === 'garden' && (
+          <g>
+            {/* Пруд */}
+            <ellipse cx={iso(0.5, 0.5, 1, rotation)[0]} cy={iso(0.5, 0.5, 1, rotation)[1]} rx="25" ry="12" fill="#4FC3F7" />
+            <ellipse cx={iso(0.5, 0.5, 1, rotation)[0]} cy={iso(0.5, 0.5, 1, rotation)[1]} rx="20" ry="10" fill="#29B6F6" opacity="0.7" />
+            {/* Кувшинки */}
+            <ellipse cx={iso(0.45, 0.48, 2, rotation)[0]} cy={iso(0.45, 0.48, 2, rotation)[1]} rx="4" ry="2" fill="#66BB6A" />
+            <ellipse cx={iso(0.55, 0.52, 2, rotation)[0]} cy={iso(0.55, 0.52, 2, rotation)[1]} rx="3" ry="1.5" fill="#81C784" />
+            
+            {/* Дерево */}
+            {isoBox(0.18, 0.28, 0.04, 0.04, 20, { top: '#6D4C41', left: '#5D4037', right: '#4E342E' }, rotation)}
+            <circle cx={iso(0.2, 0.3, 30, rotation)[0]} cy={iso(0.2, 0.3, 30, rotation)[1]} r="15" fill="#4CAF50" />
+            <circle cx={iso(0.18, 0.28, 35, rotation)[0]} cy={iso(0.18, 0.28, 35, rotation)[1]} r="10" fill="#66BB6A" />
+            <circle cx={iso(0.22, 0.32, 32, rotation)[0]} cy={iso(0.22, 0.32, 32, rotation)[1]} r="12" fill="#81C784" />
+            
+            {/* Грядки с морковкой */}
+            {isoBox(0.75, 0.65, 0.1, 0.1, 3, { top: '#795548', left: '#6D4C41', right: '#5D4037' }, rotation)}
+            {/* Морковки */}
+            <polygon points={`${iso(0.77, 0.67, 4, rotation)[0]},${iso(0.77, 0.67, 4, rotation)[1]} ${iso(0.77, 0.67, 8, rotation)[0]},${iso(0.77, 0.67, 8, rotation)[1]}`} stroke="#FF6F00" strokeWidth="2" />
+            <line x1={iso(0.77, 0.67, 8, rotation)[0]} y1={iso(0.77, 0.67, 8, rotation)[1]} x2={iso(0.76, 0.66, 10, rotation)[0]} y2={iso(0.76, 0.66, 10, rotation)[1]} stroke="#4CAF50" strokeWidth="1" />
+            <polygon points={`${iso(0.8, 0.7, 4, rotation)[0]},${iso(0.8, 0.7, 4, rotation)[1]} ${iso(0.8, 0.7, 7, rotation)[0]},${iso(0.8, 0.7, 7, rotation)[1]}`} stroke="#FF6F00" strokeWidth="2" />
+            <line x1={iso(0.8, 0.7, 7, rotation)[0]} y1={iso(0.8, 0.7, 7, rotation)[1]} x2={iso(0.79, 0.69, 9, rotation)[0]} y2={iso(0.79, 0.69, 9, rotation)[1]} stroke="#4CAF50" strokeWidth="1" />
+            
+            {/* Цветы */}
+            <circle cx={iso(0.3, 0.7, 3, rotation)[0]} cy={iso(0.3, 0.7, 3, rotation)[1]} r="3" fill="#E91E63" />
+            <circle cx={iso(0.35, 0.75, 3, rotation)[0]} cy={iso(0.35, 0.75, 3, rotation)[1]} r="2.5" fill="#FFEB3B" />
+            <circle cx={iso(0.25, 0.65, 3, rotation)[0]} cy={iso(0.25, 0.65, 3, rotation)[1]} r="2" fill="#9C27B0" />
+          </g>
+        )}
+
+        {currentRoom === 'library' && (
+          <g>
+            {/* Книжные полки */}
+            {isoBox(0.2, 0.35, 0.2, 0.1, 35, { top: '#8D6E63', left: '#6D4C41', right: '#795548' }, rotation)}
+            {/* Книги */}
+            <rect x={iso(0.22, 0.37, 20, rotation)[0]} y={iso(0.22, 0.37, 20, rotation)[1]} width="3" height="10" fill="#F44336" />
+            <rect x={iso(0.25, 0.38, 20, rotation)[0]} y={iso(0.25, 0.38, 20, rotation)[1]} width="3" height="12" fill="#2196F3" />
+            <rect x={iso(0.28, 0.39, 20, rotation)[0]} y={iso(0.28, 0.39, 20, rotation)[1]} width="3" height="9" fill="#4CAF50" />
+            <rect x={iso(0.31, 0.4, 20, rotation)[0]} y={iso(0.31, 0.4, 20, rotation)[1]} width="3" height="11" fill="#FFEB3B" />
+            <rect x={iso(0.34, 0.41, 20, rotation)[0]} y={iso(0.34, 0.41, 20, rotation)[1]} width="3" height="10" fill="#9C27B0" />
+            
+            {/* Глобус */}
+            {isoBox(0.68, 0.28, 0.04, 0.04, 10, { top: '#6D4C41', left: '#5D4037', right: '#4E342E' }, rotation)}
+            <circle cx={iso(0.7, 0.3, 18, rotation)[0]} cy={iso(0.7, 0.3, 18, rotation)[1]} r="8" fill="#4FC3F7" />
+            <path d={`M ${iso(0.7, 0.3, 18, rotation)[0] - 6} ${iso(0.7, 0.3, 18, rotation)[1]} A 6 6 0 0 1 ${iso(0.7, 0.3, 18, rotation)[0] + 6} ${iso(0.7, 0.3, 18, rotation)[1]}`} stroke="#4CAF50" strokeWidth="2" fill="none" />
+            
+            {/* Лестница */}
+            {isoBox(0.48, 0.68, 0.04, 0.04, 30, { top: '#A1887F', left: '#8D6E63', right: '#795548' }, rotation)}
+            <line x1={iso(0.48, 0.68, 5, rotation)[0]} y1={iso(0.48, 0.68, 5, rotation)[1]} x2={iso(0.52, 0.72, 5, rotation)[0]} y2={iso(0.52, 0.72, 5, rotation)[1]} stroke="#6D4C41" strokeWidth="1.5" />
+            <line x1={iso(0.48, 0.68, 10, rotation)[0]} y1={iso(0.48, 0.68, 10, rotation)[1]} x2={iso(0.52, 0.72, 10, rotation)[0]} y2={iso(0.52, 0.72, 10, rotation)[1]} stroke="#6D4C41" strokeWidth="1.5" />
+            <line x1={iso(0.48, 0.68, 15, rotation)[0]} y1={iso(0.48, 0.68, 15, rotation)[1]} x2={iso(0.52, 0.72, 15, rotation)[0]} y2={iso(0.52, 0.72, 15, rotation)[1]} stroke="#6D4C41" strokeWidth="1.5" />
+            
+            {/* Стол с книгой */}
+            {isoBox(0.55, 0.5, 0.1, 0.08, 15, { top: '#A1887F', left: '#8D6E63', right: '#795548' }, rotation)}
+            <rect x={iso(0.57, 0.52, 16, rotation)[0]} y={iso(0.57, 0.52, 16, rotation)[1]} width="6" height="4" fill="#3F51B5" />
+          </g>
+        )}
+
         {/* Кликабельные объекты */}
         {roomConfig.objects.map(obj => (
           <circle
@@ -1110,6 +1267,19 @@ function App() {
             {roomConfig.objects.find(o => o.id === hoveredObject)?.label || roomConfig.doors.find(d => d.id === hoveredObject)?.label}
           </text>
         )}
+
+        {/* Персонажи в комнате */}
+        {getCharactersInRoom(characters, currentRoom).map(char => {
+          const [charX, charY] = iso(char.x, char.y, 0, rotation);
+          return (
+            <g key={char.id}>
+              <ellipse cx={charX + 1} cy={charY + 3} rx="6" ry="3" fill="rgba(0,0,0,0.05)" />
+              <text x={charX} y={charY} textAnchor="middle" dominantBaseline="central" fontSize="24" style={{ filter: 'drop-shadow(1px 1px 1px rgba(0,0,0,0.1))' }}>
+                {char.emoji}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Тень мыши */}
         <ellipse cx={sx + 2} cy={sy + 4} rx="8" ry="4" fill="rgba(0,0,0,0.07)" />
