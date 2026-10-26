@@ -27,6 +27,26 @@ function iso(a: number, b: number, h = 0, rotation = 0): [number, number] {
   return [screenX, screenY];
 }
 
+/* Обратное преобразование: экранные координаты → iso (a, b) */
+function screenToIso(sx: number, sy: number, rotation = 0): { a: number; b: number } {
+  // Сначала получаем rx, ry из экранных координат
+  const rxPlusRy = (sx - 400) / 250;
+  const ryMinusRx = (sy - 345) / 125;
+  
+  const rx = (rxPlusRy - ryMinusRx) / 2;
+  const ry = (rxPlusRy + ryMinusRx) / 2;
+  
+  // Обратное вращение
+  const angle = (-rotation * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  
+  const cx = rx * cos - ry * sin;
+  const cy = rx * sin + ry * cos;
+  
+  return { a: cx + 0.5, b: cy + 0.5 };
+}
+
 function isoPoly(points: [number, number][]): string {
   return points.map(([x, y]) => `${x},${y}`).join(' ');
 }
@@ -382,6 +402,42 @@ function App() {
     }, newPath.length * 150);
   }, [mousePos, currentRoom, transitioning, isMoving]);
 
+  /* Клик на пол — мышь бежит в любую точку */
+  const handleFloorClick = useCallback((e: React.MouseEvent<SVGPolygonElement>) => {
+    if (transitioning || isMoving || isDragging) return;
+    e.stopPropagation();
+
+    // Получаем координаты клика относительно SVG
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox.baseVal;
+    
+    // Масштабируем координаты клика к viewBox
+    const scaleX = viewBox.width / rect.width;
+    const scaleY = viewBox.height / rect.height;
+    const svgX = (e.clientX - rect.left) * scaleX;
+    const svgY = (e.clientY - rect.top) * scaleY;
+
+    // Конвертируем в iso-координаты
+    const target = screenToIso(svgX, svgY, rotation);
+    
+    // Ограничиваем пределами комнаты
+    const clampedA = Math.max(0.05, Math.min(0.95, target.a));
+    const clampedB = Math.max(0.05, Math.min(0.95, target.b));
+    
+    // Проверяем что не попали в препятствие
+    const testPos = { a: clampedA, b: clampedB };
+    if (isBlocked(testPos, OBSTACLES[currentRoom])) return;
+
+    const newPath = findPath(mousePos, { a: clampedA, b: clampedB }, OBSTACLES[currentRoom]);
+    setPath(newPath);
+    setPathIndex(0);
+    setIsMoving(true);
+    setTargetPos({ a: clampedA, b: clampedB });
+  }, [mousePos, currentRoom, transitioning, isMoving, isDragging, rotation]);
+
   const [sx, sy] = iso(mousePos.a, mousePos.b, 0, rotation);
   const moodEmoji = mood > 80 ? '😍' : mood > 60 ? '😊' : mood > 40 ? '🐁' : mood > 20 ? '😐' : '😢';
   const moodLabel = mood > 80 ? 'Счастлива!' : mood > 60 ? 'Довольна' : mood > 40 ? 'Нормально' : mood > 20 ? 'Скучно...' : 'Грустно...';
@@ -456,7 +512,14 @@ function App() {
         style={{ cursor: isDragging ? 'grabbing' : 'default' }}
       >
         {/* Пол */}
-        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} fill={currentRoom === 'living' ? '#e8e2d8' : '#ddd5c5'} stroke="#c8c0b0" strokeWidth="0.5" />
+        <polygon 
+          points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} 
+          fill={currentRoom === 'living' ? '#e8e2d8' : '#ddd5c5'} 
+          stroke="#c8c0b0" 
+          strokeWidth="0.5"
+          onClick={handleFloorClick}
+          style={{ cursor: 'pointer' }}
+        />
         {Array.from({ length: 10 }).map((_, i) => {
           const t = i / 10;
           return (
@@ -485,7 +548,7 @@ function App() {
           const isHovered = hoveredObject === door.id;
 
           return (
-            <g key={door.id} style={{ cursor: 'pointer' }} onClick={() => handleDoorClick(door)} onMouseEnter={() => setHoveredObject(door.id)} onMouseLeave={() => setHoveredObject(null)}>
+            <g key={door.id} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); handleDoorClick(door); }} onMouseEnter={() => setHoveredObject(door.id)} onMouseLeave={() => setHoveredObject(null)}>
               <polygon points={isoPoly(points)} fill={isHovered ? '#7B5236' : '#5A3520'} stroke="#3A1A08" strokeWidth="1.5" />
               <circle cx={handlePos[0]} cy={handlePos[1]} r="2.5" fill="#FFD700" />
               {isHovered && (
@@ -538,7 +601,7 @@ function App() {
             r="20"
             fill="transparent"
             style={{ cursor: 'pointer' }}
-            onClick={() => handleObjectClick(obj)}
+            onClick={(e) => { e.stopPropagation(); handleObjectClick(obj); }}
             onMouseEnter={() => setHoveredObject(obj.id)}
             onMouseLeave={() => setHoveredObject(null)}
           />
@@ -579,7 +642,7 @@ function App() {
       </svg>
 
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
-        кликай на объекты • зажми колёсико мыши для поворота камеры
+        кликай в любое место на полу • зажми колёсико мыши для поворота камеры
       </div>
     </div>
   );
