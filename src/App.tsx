@@ -1,17 +1,30 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 /*
-  Point-and-click управление с pathfinding
+  Point-and-click управление с pathfinding и вращением камеры
   
   Мышь бежит к объекту по клику, огибая препятствия.
-  Используется A* алгоритм на изометрической сетке.
+  Камера вращается через drag (Shift+клик) или кнопки.
 */
 
 type RoomId = 'living' | 'kitchen';
 
-/* ── Изометрические хелперы ── */
-function iso(a: number, b: number, h = 0): [number, number] {
-  return [150 + 250 * (a + b), 345 + 125 * (b - a) - h];
+/* ── Изометрические хелперы с учётом поворота ── */
+function iso(a: number, b: number, h = 0, rotation = 0): [number, number] {
+  const cx = a - 0.5;
+  const cy = b - 0.5;
+  
+  const angle = (rotation * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  
+  const rx = cx * cos - cy * sin;
+  const ry = cx * sin + cy * cos;
+  
+  const screenX = 400 + 250 * (rx + ry);
+  const screenY = 345 + 125 * (ry - rx) - h;
+  
+  return [screenX, screenY];
 }
 
 function isoPoly(points: [number, number][]): string {
@@ -20,9 +33,10 @@ function isoPoly(points: [number, number][]): string {
 
 function isoBox(
   a: number, b: number, w: number, d: number, h: number,
-  colors: { top: string; left: string; right: string }
+  colors: { top: string; left: string; right: string },
+  rotation = 0
 ) {
-  const p = (da: number, db: number, dh: number) => iso(a + da, b + db, dh);
+  const p = (da: number, db: number, dh: number) => iso(a + da, b + db, dh, rotation);
   const topFace = isoPoly([p(0, 0, h), p(w, 0, h), p(w, d, h), p(0, d, h)]);
   const leftFace = isoPoly([p(0, 0, h), p(0, d, h), p(0, d, 0), p(0, 0, 0)]);
   const rightFace = isoPoly([p(0, 0, h), p(w, 0, h), p(w, 0, 0), p(0, 0, 0)]);
@@ -67,18 +81,17 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
   },
 };
 
-/* ── Препятствия для pathfinding (мебель) ── */
 interface Obstacle { a1: number; b1: number; a2: number; b2: number }
 
 const OBSTACLES: Record<RoomId, Obstacle[]> = {
   living: [
-    { a1: 0.05, b1: 0.45, a2: 0.41, b2: 0.57 }, // Шкафчики
-    { a1: 0.38, b1: 0.42, a2: 0.63, b2: 0.60 }, // Стол
+    { a1: 0.05, b1: 0.45, a2: 0.41, b2: 0.57 },
+    { a1: 0.38, b1: 0.42, a2: 0.63, b2: 0.60 },
   ],
   kitchen: [
-    { a1: 0.45, b1: 0.55, a2: 0.65, b2: 0.70 }, // Кухонный стол
-    { a1: 0.70, b1: 0.25, a2: 0.85, b2: 0.43 }, // Плита
-    { a1: 0.05, b1: 0.25, a2: 0.18, b2: 0.40 }, // Холодильник
+    { a1: 0.45, b1: 0.55, a2: 0.65, b2: 0.70 },
+    { a1: 0.70, b1: 0.25, a2: 0.85, b2: 0.43 },
+    { a1: 0.05, b1: 0.25, a2: 0.18, b2: 0.40 },
   ],
 };
 
@@ -133,7 +146,6 @@ function findPath(start: GridPos, end: GridPos, obstacles: Obstacle[]): GridPos[
     const current = openSet.shift()!;
     
     if (Math.abs(current.a - end.a) < GRID_SIZE && Math.abs(current.b - end.b) < GRID_SIZE) {
-      // Восстановить путь
       const path: GridPos[] = [current];
       let curr = current;
       while (cameFrom.has(key(curr))) {
@@ -156,7 +168,7 @@ function findPath(start: GridPos, end: GridPos, obstacles: Obstacle[]): GridPos[
     }
   }
 
-  return [start, end]; // Если путь не найден — прямая линия
+  return [start, end];
 }
 
 function App() {
@@ -173,9 +185,39 @@ function App() {
   const [transitioning, setTransitioning] = useState(false);
   const [hoveredObject, setHoveredObject] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  
+  // Камера
+  const [rotation, setRotation] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<{ x: number; rotation: number } | null>(null);
 
   const animationRef = useRef<number>();
   const moodRef = useRef(50);
+
+  // Обработчики вращения камеры
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 2 || e.shiftKey) {
+      e.preventDefault();
+      setIsDragging(true);
+      dragStartRef.current = { x: e.clientX, rotation };
+    }
+  };
+
+  const handleCameraMove = (e: React.MouseEvent) => {
+    if (isDragging && dragStartRef.current) {
+      const dx = e.clientX - dragStartRef.current.x;
+      setRotation(dragStartRef.current.rotation + dx * 0.5);
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    dragStartRef.current = null;
+  };
+
+  const rotateCamera = (delta: number) => {
+    setRotation(prev => prev + delta);
+  };
 
   /* Анимация движения мыши по пути */
   useEffect(() => {
@@ -185,7 +227,7 @@ function App() {
     }
 
     const target = path[pathIndex];
-    const speed = 0.008; // Скорость движения
+    const speed = 0.008;
 
     const animate = () => {
       setMousePos(prev => {
@@ -194,7 +236,6 @@ function App() {
         const dist = Math.sqrt(da * da + db * db);
 
         if (dist < speed) {
-          // Переход к следующей точке
           setPathIndex(i => i + 1);
           return target;
         }
@@ -254,12 +295,10 @@ function App() {
     setIsMoving(true);
     setTargetPos({ a: obj.a, b: obj.b });
 
-    // Показать сообщение при достижении
     setTimeout(() => {
       setMessage(obj.action);
       setTimeout(() => setMessage(null), 2000);
 
-      // Действие при достижении
       if (obj.id === 'kitchen-table' && cheeseLeft > 0) {
         setCheeseLeft(p => p - 1);
         moodRef.current = Math.min(100, moodRef.current + 8);
@@ -291,7 +330,7 @@ function App() {
     }, newPath.length * 150);
   }, [mousePos, currentRoom, transitioning, isMoving]);
 
-  const [sx, sy] = iso(mousePos.a, mousePos.b, 0);
+  const [sx, sy] = iso(mousePos.a, mousePos.b, 0, rotation);
   const moodEmoji = mood > 80 ? '😍' : mood > 60 ? '😊' : mood > 40 ? '🐁' : mood > 20 ? '😐' : '😢';
   const moodLabel = mood > 80 ? 'Счастлива!' : mood > 60 ? 'Довольна' : mood > 40 ? 'Нормально' : mood > 20 ? 'Скучно...' : 'Грустно...';
   const mouseEmoji = activeObject === 'kitchen-table' && cheeseLeft > 0 ? '🐁✨' : mood > 80 ? '🐁💕' : '🐁';
@@ -327,24 +366,59 @@ function App() {
         </div>
       )}
 
+      {/* Кнопки поворота камеры */}
+      <div className="absolute bottom-20 right-4 z-50 flex flex-col gap-2">
+        <button
+          onClick={() => rotateCamera(-45)}
+          className="w-10 h-10 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center text-lg"
+          title="Повернуть влево"
+        >
+          ↺
+        </button>
+        <button
+          onClick={() => rotateCamera(45)}
+          className="w-10 h-10 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center text-lg"
+          title="Повернуть вправо"
+        >
+          ↻
+        </button>
+        <button
+          onClick={() => setRotation(0)}
+          className="w-10 h-10 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center text-xs font-bold"
+          title="Сбросить поворот"
+        >
+          ⟳
+        </button>
+      </div>
+
       {/* SVG сцена */}
-      <svg ref={svgRef} viewBox="0 0 800 600" className={`w-full h-full max-w-4xl max-h-[700px] transition-opacity duration-300 ${transitioning ? 'opacity-0' : 'opacity-100'}`}>
+      <svg
+        ref={svgRef}
+        viewBox="0 0 800 600"
+        className={`w-full h-full max-w-4xl max-h-[700px] transition-opacity duration-300 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleCameraMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onContextMenu={(e) => e.preventDefault()}
+        style={{ cursor: isDragging ? 'grabbing' : 'default' }}
+      >
         {/* Пол */}
-        <polygon points={isoPoly([iso(0, 0, 0), iso(1, 0, 0), iso(1, 1, 0), iso(0, 1, 0)])} fill={currentRoom === 'living' ? '#e8e2d8' : '#ddd5c5'} stroke="#c8c0b0" strokeWidth="0.5" />
+        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} fill={currentRoom === 'living' ? '#e8e2d8' : '#ddd5c5'} stroke="#c8c0b0" strokeWidth="0.5" />
         {Array.from({ length: 10 }).map((_, i) => {
           const t = i / 10;
           return (
             <g key={`grid-${i}`} opacity="0.12">
-              <line x1={iso(t, 0, 0)[0]} y1={iso(t, 0, 0)[1]} x2={iso(t, 1, 0)[0]} y2={iso(t, 1, 0)[1]} stroke="#a09080" strokeWidth="0.5" />
-              <line x1={iso(0, t, 0)[0]} y1={iso(0, t, 0)[1]} x2={iso(1, t, 0)[0]} y2={iso(1, t, 0)[1]} stroke="#a09080" strokeWidth="0.5" />
+              <line x1={iso(t, 0, 0, rotation)[0]} y1={iso(t, 0, 0, rotation)[1]} x2={iso(t, 1, 0, rotation)[0]} y2={iso(t, 1, 0, rotation)[1]} stroke="#a09080" strokeWidth="0.5" />
+              <line x1={iso(0, t, 0, rotation)[0]} y1={iso(0, t, 0, rotation)[1]} x2={iso(1, t, 0, rotation)[0]} y2={iso(1, t, 0, rotation)[1]} stroke="#a09080" strokeWidth="0.5" />
             </g>
           );
         })}
 
         {/* Стены */}
-        <polygon points={isoPoly([iso(0, 0, 0), iso(1, 0, 0), iso(1, 0, 150), iso(0, 0, 150)])} fill={currentRoom === 'living' ? '#e0dbd4' : '#ebe5d8'} />
-        <polygon points={isoPoly([iso(1, 0, 0), iso(1, 1, 0), iso(1, 1, 150), iso(1, 0, 150)])} fill={currentRoom === 'living' ? '#d4cfc6' : '#e0d9cc'} />
-        <line x1={iso(1, 0, 0)[0]} y1={iso(1, 0, 0)[1]} x2={iso(1, 0, 150)[0]} y2={iso(1, 0, 150)[1]} stroke="#b8b0a5" strokeWidth="1" />
+        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : '#ebe5d8'} />
+        <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : '#e0d9cc'} />
+        <line x1={iso(1, 0, 0, rotation)[0]} y1={iso(1, 0, 0, rotation)[1]} x2={iso(1, 0, 150, rotation)[0]} y2={iso(1, 0, 150, rotation)[1]} stroke="#b8b0a5" strokeWidth="1" />
 
         {/* Двери */}
         {roomConfig.doors.map(door => {
@@ -353,9 +427,9 @@ function App() {
           const a1 = isLeft ? 0.55 : 1, a2 = isLeft ? 0.67 : 1;
           const b1 = isLeft ? 0 : 0.33, b2 = isLeft ? 0 : 0.45;
           const points = isLeft
-            ? [iso(a1, 0, 0), iso(a2, 0, 0), iso(a2, 0, doorH), iso(a1, 0, doorH)]
-            : [iso(1, b1, 0), iso(1, b2, 0), iso(1, b2, doorH), iso(1, b1, doorH)];
-          const handlePos = isLeft ? iso(0.64, 0, doorH * 0.45) : iso(1, 0.36, doorH * 0.45);
+            ? [iso(a1, 0, 0, rotation), iso(a2, 0, 0, rotation), iso(a2, 0, doorH, rotation), iso(a1, 0, doorH, rotation)]
+            : [iso(1, b1, 0, rotation), iso(1, b2, 0, rotation), iso(1, b2, doorH, rotation), iso(1, b1, doorH, rotation)];
+          const handlePos = isLeft ? iso(0.64, 0, doorH * 0.45, rotation) : iso(1, 0.36, doorH * 0.45, rotation);
           const isHovered = hoveredObject === door.id;
 
           return (
@@ -363,7 +437,7 @@ function App() {
               <polygon points={isoPoly(points)} fill={isHovered ? '#7B5236' : '#5A3520'} stroke="#3A1A08" strokeWidth="1.5" />
               <circle cx={handlePos[0]} cy={handlePos[1]} r="2.5" fill="#FFD700" />
               {isHovered && (
-                <text x={isLeft ? iso(0.61, 0, doorH + 12)[0] : iso(1, 0.39, doorH + 12)[0]} y={isLeft ? iso(0.61, 0, doorH + 12)[1] : iso(1, 0.39, doorH + 12)[1]} textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#22c55e">
+                <text x={isLeft ? iso(0.61, 0, doorH + 12, rotation)[0] : iso(1, 0.39, doorH + 12, rotation)[0]} y={isLeft ? iso(0.61, 0, doorH + 12, rotation)[1] : iso(1, 0.39, doorH + 12, rotation)[1]} textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#22c55e">
                   {door.label}
                 </text>
               )}
@@ -374,50 +448,41 @@ function App() {
         {/* Содержимое комнаты */}
         {currentRoom === 'living' && (
           <g>
-            {/* Окно */}
-            <polygon points={isoPoly([iso(0.2, 0, 30), iso(0.45, 0, 30), iso(0.45, 0, 85), iso(0.2, 0, 85)])} fill="#87CEEB" stroke="#8B7355" strokeWidth="2" />
-            <line x1={iso(0.325, 0, 30)[0]} y1={iso(0.325, 0, 30)[1]} x2={iso(0.325, 0, 85)[0]} y2={iso(0.325, 0, 85)[1]} stroke="#8B7355" strokeWidth="1.2" />
-            <line x1={iso(0.2, 0, 57.5)[0]} y1={iso(0.2, 0, 57.5)[1]} x2={iso(0.45, 0, 57.5)[0]} y2={iso(0.45, 0, 57.5)[1]} stroke="#8B7355" strokeWidth="1.2" />
+            <polygon points={isoPoly([iso(0.2, 0, 30, rotation), iso(0.45, 0, 30, rotation), iso(0.45, 0, 85, rotation), iso(0.2, 0, 85, rotation)])} fill="#87CEEB" stroke="#8B7355" strokeWidth="2" />
+            <line x1={iso(0.325, 0, 30, rotation)[0]} y1={iso(0.325, 0, 30, rotation)[1]} x2={iso(0.325, 0, 85, rotation)[0]} y2={iso(0.325, 0, 85, rotation)[1]} stroke="#8B7355" strokeWidth="1.2" />
+            <line x1={iso(0.2, 0, 57.5, rotation)[0]} y1={iso(0.2, 0, 57.5, rotation)[1]} x2={iso(0.45, 0, 57.5, rotation)[0]} y2={iso(0.45, 0, 57.5, rotation)[1]} stroke="#8B7355" strokeWidth="1.2" />
             
-            {/* Шкафчики */}
-            {isoBox(0.05, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' })}
-            {isoBox(0.17, 0.45, 0.12, 0.12, 55, { top: '#8090A0', left: '#607080', right: '#708090' })}
-            {isoBox(0.29, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' })}
+            {isoBox(0.05, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' }, rotation)}
+            {isoBox(0.17, 0.45, 0.12, 0.12, 55, { top: '#8090A0', left: '#607080', right: '#708090' }, rotation)}
+            {isoBox(0.29, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' }, rotation)}
             
-            {/* Стол */}
-            {isoBox(0.38, 0.42, 0.25, 0.18, 38, { top: '#b8884c', left: '#7a5828', right: '#8a6830' })}
-            
-            {/* Ноутбук */}
-            {isoBox(0.44, 0.46, 0.08, 0.06, 42, { top: '#555', left: '#444', right: '#4a4a4a' })}
+            {isoBox(0.38, 0.42, 0.25, 0.18, 38, { top: '#b8884c', left: '#7a5828', right: '#8a6830' }, rotation)}
+            {isoBox(0.44, 0.46, 0.08, 0.06, 42, { top: '#555', left: '#444', right: '#4a4a4a' }, rotation)}
           </g>
         )}
 
         {currentRoom === 'kitchen' && (
           <g>
-            {/* Кухонный стол */}
-            {isoBox(0.45, 0.55, 0.2, 0.15, 35, { top: '#f0f0f0', left: '#c8c8c8', right: '#d0d0d0' })}
+            {isoBox(0.45, 0.55, 0.2, 0.15, 35, { top: '#f0f0f0', left: '#c8c8c8', right: '#d0d0d0' }, rotation)}
             
-            {/* Тарелка с сыром */}
-            <ellipse cx={iso(0.55, 0.62, 36)[0]} cy={iso(0.55, 0.62, 36)[1]} rx="10" ry="5" fill="#fff" stroke="#ddd" strokeWidth="0.5" />
+            <ellipse cx={iso(0.55, 0.62, 36, rotation)[0]} cy={iso(0.55, 0.62, 36, rotation)[1]} rx="10" ry="5" fill="#fff" stroke="#ddd" strokeWidth="0.5" />
             {cheeseLeft > 0 && Array.from({ length: Math.min(cheeseLeft, 5) }).map((_, i) => (
-              <rect key={i} x={iso(0.53 + (i % 3) * 0.02, 0.61 + Math.floor(i / 3) * 0.02, 37)[0] - 3} y={iso(0.53 + (i % 3) * 0.02, 0.61 + Math.floor(i / 3) * 0.02, 37)[1] - 2.5} width="6" height="5" rx="0.5" fill="#FFD700" />
+              <rect key={i} x={iso(0.53 + (i % 3) * 0.02, 0.61 + Math.floor(i / 3) * 0.02, 37, rotation)[0] - 3} y={iso(0.53 + (i % 3) * 0.02, 0.61 + Math.floor(i / 3) * 0.02, 37, rotation)[1] - 2.5} width="6" height="5" rx="0.5" fill="#FFD700" />
             ))}
             
-            {/* Плита */}
-            {isoBox(0.7, 0.25, 0.15, 0.18, 40, { top: '#444', left: '#333', right: '#3a3a3a' })}
-            <ellipse cx={iso(0.74, 0.31, 41)[0]} cy={iso(0.74, 0.31, 41)[1]} rx="4" ry="2" fill="#222" stroke="#555" strokeWidth="0.5" />
+            {isoBox(0.7, 0.25, 0.15, 0.18, 40, { top: '#444', left: '#333', right: '#3a3a3a' }, rotation)}
+            <ellipse cx={iso(0.74, 0.31, 41, rotation)[0]} cy={iso(0.74, 0.31, 41, rotation)[1]} rx="4" ry="2" fill="#222" stroke="#555" strokeWidth="0.5" />
             
-            {/* Холодильник */}
-            {isoBox(0.05, 0.25, 0.13, 0.15, 80, { top: '#f5f5f5', left: '#ddd', right: '#e0e0e0' })}
+            {isoBox(0.05, 0.25, 0.13, 0.15, 80, { top: '#f5f5f5', left: '#ddd', right: '#e0e0e0' }, rotation)}
           </g>
         )}
 
-        {/* Кликабельные объекты (невидимые зоны) */}
+        {/* Кликабельные объекты */}
         {roomConfig.objects.map(obj => (
           <circle
             key={obj.id}
-            cx={iso(obj.a, obj.b, 0)[0]}
-            cy={iso(obj.a, obj.b, 0)[1]}
+            cx={iso(obj.a, obj.b, 0, rotation)[0]}
+            cy={iso(obj.a, obj.b, 0, rotation)[1]}
             r="20"
             fill="transparent"
             style={{ cursor: 'pointer' }}
@@ -431,14 +496,16 @@ function App() {
         {hoveredObject && !isMoving && (
           <text
             x={iso(
-              roomConfig.objects.find(o => o.id === hoveredObject)?.a || roomConfig.doors.find(d => d.id === hoveredObject)?.side === 'left' ? 0.61 : 0.95,
-              roomConfig.objects.find(o => o.id === hoveredObject)?.b || roomConfig.doors.find(d => d.id === hoveredObject)?.side === 'left' ? 0.05 : 0.39,
-              20
+              roomConfig.objects.find(o => o.id === hoveredObject)?.a || 0.5,
+              roomConfig.objects.find(o => o.id === hoveredObject)?.b || 0.5,
+              20,
+              rotation
             )[0]}
             y={iso(
-              roomConfig.objects.find(o => o.id === hoveredObject)?.a || roomConfig.doors.find(d => d.id === hoveredObject)?.side === 'left' ? 0.61 : 0.95,
-              roomConfig.objects.find(o => o.id === hoveredObject)?.b || roomConfig.doors.find(d => d.id === hoveredObject)?.side === 'left' ? 0.05 : 0.39,
-              20
+              roomConfig.objects.find(o => o.id === hoveredObject)?.a || 0.5,
+              roomConfig.objects.find(o => o.id === hoveredObject)?.b || 0.5,
+              20,
+              rotation
             )[1]}
             textAnchor="middle"
             fontSize="11"
@@ -460,7 +527,7 @@ function App() {
       </svg>
 
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-gray-300 text-[10px] font-mono tracking-wider pointer-events-none">
-        кликай на объекты — мышь побежит к ним
+        кликай на объекты • shift+drag или кнопки для поворота камеры
       </div>
     </div>
   );
