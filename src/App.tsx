@@ -7,7 +7,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
   Камера вращается через drag (Shift+клик) или кнопки.
 */
 
-type RoomId = 'living' | 'kitchen' | 'corridor';
+type RoomId = 'living' | 'kitchen' | 'corridor' | 'cheese-storage';
 
 /* ── Изометрические хелперы с учётом поворота ── */
 function iso(a: number, b: number, h = 0, rotation = 0): [number, number] {
@@ -156,13 +156,26 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
     doors: [
       { id: 'door-1', side: 'left', targetRoom: 'living', label: '→ Гостиная', position: 0.2 },
       { id: 'door-2', side: 'right', targetRoom: 'kitchen', label: '→ Кухня', position: 0.2 },
-      { id: 'door-3', side: 'left', targetRoom: 'living', label: '→ Спальня (скоро)', position: 0.7 },
+      { id: 'door-3', side: 'left', targetRoom: 'cheese-storage', label: '→ Склад сыра 🧀', position: 0.7 },
       { id: 'door-4', side: 'right', targetRoom: 'kitchen', label: '→ Ванная (скоро)', position: 0.7 },
     ],
     objects: [
       { id: 'plant-1', a: 0.2, b: 0.5, label: '🌿 Растение', action: 'Посмотреть на растение' },
       { id: 'painting', a: 0.5, b: 0.3, label: '🖼️ Картина', action: 'Рассмотреть картину' },
       { id: 'lamp', a: 0.8, b: 0.5, label: '💡 Лампа', action: 'Включить свет' },
+    ],
+  },
+  'cheese-storage': {
+    name: 'Склад сыра 🧀',
+    doors: [
+      { id: 'door-storage', side: 'left', targetRoom: 'corridor', label: '→ Коридор', position: 0.5 },
+      { id: 'door-secret', side: 'right', targetRoom: 'kitchen', label: '→ Секретный ход', position: 0.5 },
+    ],
+    objects: [
+      { id: 'cheese-mountain', a: 0.5, b: 0.5, label: '🧀 Гора сыра', action: 'Нырнуть в гору сыра!' },
+      { id: 'cheese-wheel', a: 0.25, b: 0.35, label: '🧀 Сырное колесо', action: 'Покатить колесо сыра' },
+      { id: 'cheese-shelf', a: 0.75, b: 0.35, label: '📦 Полка с сыром', action: 'Выбрать лучший сыр' },
+      { id: 'cheese-fountain', a: 0.5, b: 0.75, label: '⛲ Сырный фонтан', action: 'Искупаться в сыре' },
     ],
   },
 };
@@ -182,6 +195,12 @@ const OBSTACLES: Record<RoomId, Obstacle[]> = {
   corridor: [
     { a1: 0.15, b1: 0.45, a2: 0.25, b2: 0.55 }, // Растение
     { a1: 0.75, b1: 0.45, a2: 0.85, b2: 0.55 }, // Лампа
+  ],
+  'cheese-storage': [
+    { a1: 0.4, b1: 0.4, a2: 0.6, b2: 0.6 }, // Гора сыра
+    { a1: 0.15, b1: 0.25, a2: 0.35, b2: 0.45 }, // Сырное колесо
+    { a1: 0.65, b1: 0.25, a2: 0.85, b2: 0.45 }, // Полка с сыром
+    { a1: 0.4, b1: 0.65, a2: 0.6, b2: 0.85 }, // Сырный фонтан
   ],
 };
 
@@ -352,10 +371,17 @@ function App() {
       let zone: string | null = null;
       let totalRate = 0;
 
+      // На складе сыра мышь всегда счастлива!
+      const isCheeseStorage = currentRoom === 'cheese-storage';
+      if (isCheeseStorage) {
+        totalRate += 0.5; // Базовое счастье от окружения
+      }
+
       for (const obj of objects) {
         const dist = Math.sqrt((mousePos.a - obj.a) ** 2 + (mousePos.b - obj.b) ** 2);
         if (dist < 0.15) {
-          totalRate += 0.3 * (1 - dist / 0.15);
+          const rate = isCheeseStorage ? 0.6 : 0.3; // На складе сыра радость сильнее
+          totalRate += rate * (1 - dist / 0.15);
           zone = obj.id;
         }
       }
@@ -460,7 +486,13 @@ function App() {
   const [sx, sy] = iso(mousePos.a, mousePos.b, 0, rotation);
   const moodEmoji = mood > 80 ? '😍' : mood > 60 ? '😊' : mood > 40 ? '🐁' : mood > 20 ? '😐' : '😢';
   const moodLabel = mood > 80 ? 'Счастлива!' : mood > 60 ? 'Довольна' : mood > 40 ? 'Нормально' : mood > 20 ? 'Скучно...' : 'Грустно...';
-  const mouseEmoji = activeObject === 'kitchen-table' && cheeseLeft > 0 ? '🐁✨' : mood > 80 ? '🐁💕' : '🐁';
+  const mouseEmoji = currentRoom === 'cheese-storage' 
+    ? '🐁🧀' 
+    : activeObject === 'kitchen-table' && cheeseLeft > 0 
+      ? '🐁✨' 
+      : mood > 80 
+        ? '🐁💕' 
+        : '🐁';
   const roomConfig = ROOMS[currentRoom];
 
   return (
@@ -550,7 +582,7 @@ function App() {
         {/* Пол */}
         <polygon 
           points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(0, 1, 0, rotation)])} 
-          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : '#bcaaa4'} 
+          fill={currentRoom === 'living' ? '#e8e2d8' : currentRoom === 'kitchen' ? '#ddd5c5' : currentRoom === 'corridor' ? '#bcaaa4' : '#FFE0B2'} 
           stroke="#c8c0b0" 
           strokeWidth="0.5"
           onClick={handleFloorClick}
@@ -567,8 +599,8 @@ function App() {
         })}
 
         {/* Стены */}
-        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : '#d7ccc8'} />
-        <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : '#c8b8b0'} />
+        <polygon points={isoPoly([iso(0, 0, 0, rotation), iso(1, 0, 0, rotation), iso(1, 0, 150, rotation), iso(0, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#e0dbd4' : currentRoom === 'kitchen' ? '#ebe5d8' : currentRoom === 'corridor' ? '#d7ccc8' : '#FFECB3'} />
+        <polygon points={isoPoly([iso(1, 0, 0, rotation), iso(1, 1, 0, rotation), iso(1, 1, 150, rotation), iso(1, 0, 150, rotation)])} fill={currentRoom === 'living' ? '#d4cfc6' : currentRoom === 'kitchen' ? '#e0d9cc' : currentRoom === 'corridor' ? '#c8b8b0' : '#FFE082'} />
         <line x1={iso(1, 0, 0, rotation)[0]} y1={iso(1, 0, 0, rotation)[1]} x2={iso(1, 0, 150, rotation)[0]} y2={iso(1, 0, 150, rotation)[1]} stroke="#b8b0a5" strokeWidth="1" />
 
         {/* Двери */}
@@ -685,6 +717,79 @@ function App() {
               fill="#D32F2F" 
               opacity="0.5" 
             />
+          </g>
+        )}
+
+        {currentRoom === 'cheese-storage' && (
+          <g>
+            {/* Гора сыра (центр) */}
+            <ellipse cx={iso(0.5, 0.5, 5, rotation)[0]} cy={iso(0.5, 0.5, 5, rotation)[1]} rx="35" ry="18" fill="#FFC107" />
+            <ellipse cx={iso(0.5, 0.5, 15, rotation)[0]} cy={iso(0.5, 0.5, 15, rotation)[1]} rx="28" ry="14" fill="#FFD54F" />
+            <ellipse cx={iso(0.5, 0.5, 25, rotation)[0]} cy={iso(0.5, 0.5, 25, rotation)[1]} rx="20" ry="10" fill="#FFE082" />
+            <ellipse cx={iso(0.5, 0.5, 35, rotation)[0]} cy={iso(0.5, 0.5, 35, rotation)[1]} rx="12" ry="6" fill="#FFECB3" />
+            {/* Дырки в сыре */}
+            <circle cx={iso(0.48, 0.48, 10, rotation)[0]} cy={iso(0.48, 0.48, 10, rotation)[1]} r="2" fill="#F57F17" opacity="0.6" />
+            <circle cx={iso(0.52, 0.52, 20, rotation)[0]} cy={iso(0.52, 0.52, 20, rotation)[1]} r="1.5" fill="#F57F17" opacity="0.6" />
+            <circle cx={iso(0.5, 0.5, 30, rotation)[0]} cy={iso(0.5, 0.5, 30, rotation)[1]} r="1" fill="#F57F17" opacity="0.6" />
+            
+            {/* Сырное колесо (слева) */}
+            {isoBox(0.15, 0.25, 0.2, 0.2, 12, { top: '#FFB300', left: '#FF8F00', right: '#FFA000' }, rotation)}
+            <ellipse cx={iso(0.25, 0.35, 12, rotation)[0]} cy={iso(0.25, 0.35, 12, rotation)[1]} rx="12" ry="6" fill="#FFC107" />
+            <circle cx={iso(0.22, 0.32, 12, rotation)[0]} cy={iso(0.22, 0.32, 12, rotation)[1]} r="1.5" fill="#F57F17" opacity="0.5" />
+            <circle cx={iso(0.28, 0.38, 12, rotation)[0]} cy={iso(0.28, 0.38, 12, rotation)[1]} r="1" fill="#F57F17" opacity="0.5" />
+            
+            {/* Полка с сыром (справа) */}
+            {isoBox(0.65, 0.25, 0.2, 0.2, 30, { top: '#8D6E63', left: '#6D4C41', right: '#795548' }, rotation)}
+            {/* Полки */}
+            <polygon 
+              points={isoPoly([iso(0.65, 0.25, 10, rotation), iso(0.85, 0.25, 10, rotation), iso(0.85, 0.45, 10, rotation), iso(0.65, 0.45, 10, rotation)])} 
+              fill="#A1887F" 
+              opacity="0.8"
+            />
+            <polygon 
+              points={isoPoly([iso(0.65, 0.25, 20, rotation), iso(0.85, 0.25, 20, rotation), iso(0.85, 0.45, 20, rotation), iso(0.65, 0.45, 20, rotation)])} 
+              fill="#A1887F" 
+              opacity="0.8"
+            />
+            {/* Сыры на полках */}
+            <ellipse cx={iso(0.7, 0.3, 12, rotation)[0]} cy={iso(0.7, 0.3, 12, rotation)[1]} rx="4" ry="2" fill="#FFEB3B" />
+            <ellipse cx={iso(0.75, 0.35, 12, rotation)[0]} cy={iso(0.75, 0.35, 12, rotation)[1]} rx="4" ry="2" fill="#FFF176" />
+            <ellipse cx={iso(0.8, 0.4, 12, rotation)[0]} cy={iso(0.8, 0.4, 12, rotation)[1]} rx="4" ry="2" fill="#FFD54F" />
+            <ellipse cx={iso(0.7, 0.3, 22, rotation)[0]} cy={iso(0.7, 0.3, 22, rotation)[1]} rx="4" ry="2" fill="#FFC107" />
+            <ellipse cx={iso(0.75, 0.35, 22, rotation)[0]} cy={iso(0.75, 0.35, 22, rotation)[1]} rx="4" ry="2" fill="#FFE082" />
+            <ellipse cx={iso(0.8, 0.4, 22, rotation)[0]} cy={iso(0.8, 0.4, 22, rotation)[1]} rx="4" ry="2" fill="#FFECB3" />
+            
+            {/* Сырный фонтан (снизу) */}
+            {isoBox(0.4, 0.65, 0.2, 0.2, 8, { top: '#FFA000', left: '#FF6F00', right: '#FF8F00' }, rotation)}
+            <ellipse cx={iso(0.5, 0.75, 8, rotation)[0]} cy={iso(0.5, 0.75, 8, rotation)[1]} rx="15" ry="8" fill="#FFCA28" opacity="0.8" />
+            {/* Струи сыра */}
+            <path 
+              d={`M ${iso(0.5, 0.75, 10, rotation)[0]} ${iso(0.5, 0.75, 10, rotation)[1]} 
+                  Q ${iso(0.5, 0.75, 25, rotation)[0]} ${iso(0.5, 0.75, 25, rotation)[1]} 
+                    ${iso(0.48, 0.73, 15, rotation)[0]} ${iso(0.48, 0.73, 15, rotation)[1]}`}
+              stroke="#FFD54F" 
+              strokeWidth="3" 
+              fill="none" 
+              opacity="0.7"
+            />
+            <path 
+              d={`M ${iso(0.5, 0.75, 10, rotation)[0]} ${iso(0.5, 0.75, 10, rotation)[1]} 
+                  Q ${iso(0.5, 0.75, 25, rotation)[0]} ${iso(0.5, 0.75, 25, rotation)[1]} 
+                    ${iso(0.52, 0.77, 15, rotation)[0]} ${iso(0.52, 0.77, 15, rotation)[1]}`}
+              stroke="#FFE082" 
+              strokeWidth="3" 
+              fill="none" 
+              opacity="0.7"
+            />
+            <circle cx={iso(0.5, 0.75, 28, rotation)[0]} cy={iso(0.5, 0.75, 28, rotation)[1]} r="3" fill="#FFEB3B" opacity="0.6">
+              <animate attributeName="opacity" values="0.6;0.3;0.6" dur="2s" repeatCount="indefinite" />
+            </circle>
+            
+            {/* Маленькие кусочки сыра разбросаны */}
+            <rect x={iso(0.3, 0.6, 1, rotation)[0] - 2} y={iso(0.3, 0.6, 1, rotation)[1] - 1} width="4" height="3" fill="#FFC107" transform={`rotate(${15} ${iso(0.3, 0.6, 1, rotation)[0]} ${iso(0.3, 0.6, 1, rotation)[1]})`} />
+            <rect x={iso(0.7, 0.6, 1, rotation)[0] - 2} y={iso(0.7, 0.6, 1, rotation)[1] - 1} width="4" height="3" fill="#FFD54F" transform={`rotate(${-20} ${iso(0.7, 0.6, 1, rotation)[0]} ${iso(0.7, 0.6, 1, rotation)[1]})`} />
+            <rect x={iso(0.35, 0.2, 1, rotation)[0] - 2} y={iso(0.35, 0.2, 1, rotation)[1] - 1} width="4" height="3" fill="#FFE082" transform={`rotate(${30} ${iso(0.35, 0.2, 1, rotation)[0]} ${iso(0.35, 0.2, 1, rotation)[1]})`} />
+            <rect x={iso(0.65, 0.8, 1, rotation)[0] - 2} y={iso(0.65, 0.8, 1, rotation)[1] - 1} width="4" height="3" fill="#FFCA28" transform={`rotate(${-10} ${iso(0.65, 0.8, 1, rotation)[0]} ${iso(0.65, 0.8, 1, rotation)[1]})`} />
           </g>
         )}
 
