@@ -136,7 +136,7 @@ const ROOMS: Record<RoomId, { name: string; doors: Door[]; objects: ClickableObj
       { id: 'window', a: 0.32, b: 0.08, label: '🪟 Окно', action: 'Смотреть в окно' },
       { id: 'cabinets', a: 0.2, b: 0.5, label: '🗄️ Шкафчики', action: 'Открыть шкафчик' },
       { id: 'table', a: 0.5, b: 0.55, label: '🪑 Стол', action: 'Осмотреть стол' },
-      { id: 'laptop', a: 0.48, b: 0.48, label: '💻 Ноутбук', action: 'Включить ноутбук' },
+      { id: 'laptop', a: 0.35, b: 0.45, label: '💻 Ноутбук', action: 'Включить ноутбук' },
     ],
   },
   kitchen: {
@@ -196,6 +196,7 @@ const OBSTACLES: Record<RoomId, Obstacle[]> = {
   corridor: [
     { a1: 0.15, b1: 0.45, a2: 0.25, b2: 0.55 }, // Растение
     { a1: 0.75, b1: 0.45, a2: 0.85, b2: 0.55 }, // Лампа
+    { a1: 0.45, b1: 0.65, a2: 0.55, b2: 0.75 }, // Котик
   ],
   'cheese-storage': [
     { a1: 0.4, b1: 0.4, a2: 0.6, b2: 0.6 }, // Гора сыра
@@ -727,7 +728,7 @@ function App() {
             {isoBox(0.29, 0.45, 0.12, 0.12, 55, { top: '#8899AA', left: '#667788', right: '#778899' }, rotation)}
             
             {isoBox(0.38, 0.42, 0.25, 0.18, 38, { top: '#b8884c', left: '#7a5828', right: '#8a6830' }, rotation)}
-            {isoBox(0.44, 0.46, 0.08, 0.06, 42, { top: '#555', left: '#444', right: '#4a4a4a' }, rotation)}
+            {isoBox(0.33, 0.43, 0.08, 0.06, 42, { top: '#555', left: '#444', right: '#4a4a4a' }, rotation)}
           </g>
         )}
 
